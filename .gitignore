@@ -1,0 +1,59 @@
+# Build outputs
+*.asi
+*.exe
+*.dll
+*.lib
+*.exp
+*.pdb
+*.ilk
+*.obj
+*.pch
+*.res
+*.idb
+*.tlog
+*.lastbuildstate
+
+# Build directories
+.obj/
+Debug/
+Release/
+x64/
+x86/
+ARM/
+ARM64/
+
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# IDE
+*.aps
+*.ncb
+*.opensdf
+*.sdf
+*.cachefile
+
+# Logs (runtime generated)
+*.log
+
+# Backup files
+*.bak
+*~
+*.tmp
+*.temp
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Keep source and project files
+!*.cpp
+!*.h
+!*.hpp
+!*.vcxproj
+!*.vcxproj.filters
+!*.sln
