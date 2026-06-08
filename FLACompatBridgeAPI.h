@@ -2,7 +2,7 @@
 
 #include <stdint.h>
 
-// Optional public API exported by scripts\FLACompatBridge.asi.
+// Optional public API exported by scripts\FLACompatBridge.asi
 // Load with GetModuleHandleA("FLACompatBridge.asi") and GetProcAddress.
 
 enum FLACompatBridgeRelocatedAddress : uint32_t {
