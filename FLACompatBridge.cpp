@@ -8157,8 +8157,8 @@ struct KnownCleoPlusVersion {
 };
 
 static const KnownCleoPlusVersion kKnownCleoPlusVersions[] = {
-    // CLEO+ current build (text hash will be filled after first run)
-    { 0x00000000, 0x30590, 0x30700, 0x30870 },
+    // CLEO+ build measured 2026-06-09
+    { 0x11DFE4B9, 0x30590, 0x30700, 0x30870 },
 };
 
 static const size_t kKnownCleoPlusVersionCount =
@@ -8182,7 +8182,7 @@ uintptr_t FindAllocateBlocksByPattern(HMODULE module, const char* typeName, uint
     pattern[5] = 0x8B;
     pattern[6] = 0x70; // wildcard below
     pattern[7] = 0x04;
-    const char mask[] = "xxxxx xx?x";
+    const char mask[] = "xxxxx?xx";
 
     // Scan for all matches in .text
     uintptr_t base = reinterpret_cast<uintptr_t>(module);

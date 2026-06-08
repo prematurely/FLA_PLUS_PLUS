@@ -16,3 +16,8 @@ FLA++ (FLACompatBridge) Changelog
 - Rationale: previous hard-coded offsets (CLEO+ 0x30590/0x30700/0x30870,
   MixSets 0x00CCB0, Urbanize 0x018750) break silently when the target
   module is recompiled or updated.
+
+[Pattern Scanning Bugfix]
+- Fixed malformed mask string in FindAllocateBlocksByPattern that caused
+  the scanner loop to never execute ("xxxxx xx?x" -> "xxxxx?xx").
+- Added measured CLEO+ text-hash 0x11DFE4B9 to the known-version table.
