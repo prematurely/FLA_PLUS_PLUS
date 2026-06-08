@@ -167,19 +167,3 @@ Header: [`FLACompatBridgeAPI.h`](FLACompatBridgeAPI.h)
 | `FLACompatBridge.cpp` | Single-file implementation (~400KB, ~10,600 lines). Contains VEH, RuntimeRewrite, LazyCPool, SpecialActorBridge, crash classification, mod guards, and all export APIs. |
 | `FLACompatBridgeAPI.h` | C export declarations for external ASIs. |
 | `FLACompatBridge.vcxproj` | VS2022 project: Win32, `/MT`, C++17, outputs `.asi`. |
-
----
-
-## Principles
-
-
-1。 **Modern plugins are protected** — SilentPatch, render chains, loaders live in `ModernModuleDenylist` and are never runtime-rewritten.
-2。 **Audit before patch** — `RuntimeRewriteAudit` lets you observe what would be patched before enabling actual patches.
-3。 **No global pool recovery** — `CPools::Initialise` recovery is off by design; use `LazyCPoolRegistry` for targeted pool construction.
-4。 **Do not indiscriminately take over all DLLs** — Maximum compatibility comes from modular, configurable, auditable rules, not blanket patching.
-
----
-
-## License
-
-This is a local compatibility bridge for personal/educational use in the GTA SA modding ecosystem. It is tightly coupled to GTA SA 1.0 US memory layout and FLA 7.6 behavior and is not intended as a general-purpose standalone product.
