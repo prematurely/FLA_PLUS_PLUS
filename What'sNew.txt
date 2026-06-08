@@ -28,3 +28,12 @@ FLA++ (FLACompatBridge) Changelog
       8B F1                 ; mov esi, ecx
   not the previously assumed "mov reg, [eax+4]".
 - Added measured CLEO+ text-hash 0x11DFE4B9 to the known-version table.
+
+[Rename CLEO+ Object Guard]
+- Renamed log label from "ObjectExtendedData::AllocateBlocks" to
+  "CLEO+ ObjectPool accessor (AllocateBlocks-like prologue)".
+- CLEO+ source confirms it has no ObjectExtendedData<T> template instance;
+  Object extensions use ObjExtendedDataStore (std::unordered_map).
+- The 0x30590 pattern is still patched because it has the same prologue
+  shape and the guard is benign, but the name now accurately reflects
+  that it is not a true ObjectExtendedData::AllocateBlocks.

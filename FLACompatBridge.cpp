@@ -8439,7 +8439,7 @@ void InstallCleoPlusPoolAllocateGuard()
     }
 
     InstallOneCleoPlusPoolAllocateGuard(
-        "ObjectExtendedData::AllocateBlocks",
+        "CLEO+ ObjectPool accessor (AllocateBlocks-like prologue)",
         objAddr,
         kOriginalObjectPoolPtr,
         reinterpret_cast<uintptr_t>(Bridge_CleoPlus_ObjectAllocateBlocks_PoolGuard),
@@ -9124,7 +9124,7 @@ uint32_t ScanOneModuleForPoolAllocateGuards(const MODULEENTRY32& me, uint32_t re
     const PoolPattern patterns[] = {
         { "PedExtendedData::AllocateBlocks", kOriginalPedPoolPtr },
         { "VehicleExtendedData::AllocateBlocks", kOriginalVehiclePoolPtr },
-        { "ObjectExtendedData::AllocateBlocks", kOriginalObjectPoolPtr },
+        { "CLEO+ ObjectPool accessor (AllocateBlocks-like prologue)", kOriginalObjectPoolPtr },
     };
 
     const uintptr_t base = reinterpret_cast<uintptr_t>(me.modBaseAddr);
