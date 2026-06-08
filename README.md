@@ -172,11 +172,11 @@ Header: [`FLACompatBridgeAPI.h`](FLACompatBridgeAPI.h)
 
 ## Principles
 
-1. **FLA is the sole limit adjuster** — OLA is disabled in this environment.
-2. **Modern plugins are protected** — SilentPatch, render chains, loaders live in `ModernModuleDenylist` and are never runtime-rewritten.
-3. **Audit before patch** — `RuntimeRewriteAudit` lets you observe what would be patched before enabling actual patches.
-4. **No global pool recovery** — `CPools::Initialise` recovery is off by design; use `LazyCPoolRegistry` for targeted pool construction.
-5. **Do not indiscriminately take over all DLLs** — Maximum compatibility comes from modular, configurable, auditable rules, not blanket patching.
+
+1。 **Modern plugins are protected** — SilentPatch, render chains, loaders live in `ModernModuleDenylist` and are never runtime-rewritten.
+2。 **Audit before patch** — `RuntimeRewriteAudit` lets you observe what would be patched before enabling actual patches.
+3。 **No global pool recovery** — `CPools::Initialise` recovery is off by design; use `LazyCPoolRegistry` for targeted pool construction.
+4。 **Do not indiscriminately take over all DLLs** — Maximum compatibility comes from modular, configurable, auditable rules, not blanket patching.
 
 ---
 
