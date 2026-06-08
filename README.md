@@ -24,7 +24,7 @@ When FLA expands the game beyond vanilla limits (e.g. 160,000+ file IDs, 100,000
 | Component | Version / Notes |
 |-----------|-----------------|
 | Game | GTA SA 1.0 US HOODLUM (14,383,616 bytes) |
-| Limit Adjuster | FLA 7.6 (sole active LA; OLA disabled) |
+| Limit Adjuster | FLA 7.6 & OLA  |
 | CLEO | CLEO 5.4 + CLEO+ (final) |
 | Tested mods | Urbanize, Proper Fixes, RoSA, Taxi77, SanPablo, MixSets |
 
