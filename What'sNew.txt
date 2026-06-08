@@ -20,4 +20,11 @@ FLA++ (FLACompatBridge) Changelog
 [Pattern Scanning Bugfix]
 - Fixed malformed mask string in FindAllocateBlocksByPattern that caused
   the scanner loop to never execute ("xxxxx xx?x" -> "xxxxx?xx").
+- Corrected the assumed instruction sequence. Actual CLEO+/MixSets/Urbanize
+  machine code is:
+      A1 [poolPtr]          ; mov eax, [CPools::ms_p*Pool]
+      ?? 04 00 00 00        ; mov <reg>, 4
+      56                    ; push esi
+      8B F1                 ; mov esi, ecx
+  not the previously assumed "mov reg, [eax+4]".
 - Added measured CLEO+ text-hash 0x11DFE4B9 to the known-version table.

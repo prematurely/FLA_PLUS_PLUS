@@ -8172,17 +8172,23 @@ uintptr_t FindAllocateBlocksByPattern(HMODULE module, const char* typeName, uint
         return 0;
     }
 
-    // Pattern: mov eax, [expectedPoolPtr]  (A1 xx xx xx xx)
-    // followed by mov reg32, [eax+4]        (8B ?? 04)
-    // The second byte is the ModRM: 0x40 + reg*8  or  0x50 + reg*8 etc.
-    // We wildcard the reg and the disp8 field.
-    uint8_t pattern[8];
+    // Pattern: mov eax, [expectedPoolPtr]      (A1 xx xx xx xx)
+    // followed by mov reg32, 4                 (B8/B9/BA/BB/BC/BD/BE/BF 04 00 00 00)
+    // then push esi                            (56)
+    // then mov esi, ecx                        (8B F1)
+    // This is the prologue of plugin-sdk's ExtendedData::AllocateBlocks
+    // as emitted by MSVC for the current CLEO+/MixSets/Urbanize builds.
+    uint8_t pattern[12];
     pattern[0] = 0xA1;
     std::memcpy(pattern + 1, &expectedPoolPtr, sizeof(expectedPoolPtr));
-    pattern[5] = 0x8B;
-    pattern[6] = 0x70; // wildcard below
-    pattern[7] = 0x04;
-    const char mask[] = "xxxxx?xx";
+    pattern[5] = 0xBA; // mov edx, 4 (any B8+reg opcode wildcarded below)
+    pattern[6] = 0x04;
+    pattern[7] = 0x00;
+    pattern[8] = 0x00;
+    pattern[9] = 0x00;
+    pattern[10] = 0x56;
+    pattern[11] = 0x8B;
+    const char mask[] = "xxxxx?xxxxxx";
 
     // Scan for all matches in .text
     uintptr_t base = reinterpret_cast<uintptr_t>(module);
@@ -8224,12 +8230,11 @@ uintptr_t FindAllocateBlocksByPattern(HMODULE module, const char* typeName, uint
         if (!match) {
             continue;
         }
-        // Extra validation: the 7th byte (ModRM) must reference [eax+disp8]
-        // ModRM format: mod(2) reg(3) rm(3). [eax+disp8] = mod=01, rm=000.
-        // So top 2 bits = 01 (0x40), bottom 3 bits = 000.
-        uint8_t modrm = scan[j + 6];
-        if ((modrm & 0xC7) != 0x40) {
-            continue; // not [eax+disp8], skip
+        // Extra validation: byte 5 must be a MOV reg32, imm32 opcode (B8-BF).
+        // This rejects any accidental match where byte 5 happens to be wildcarded.
+        uint8_t movOpcode = scan[j + 5];
+        if (movOpcode < 0xB8 || movOpcode > 0xBF) {
+            continue;
         }
 
         if (!firstMatch) {
