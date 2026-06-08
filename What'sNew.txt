@@ -1,0 +1,18 @@
+FLA++ (FLACompatBridge) Changelog
+==================================
+
+2026-06-09
+----------
+[Pattern Scanning + Version Hash Fallback for PoolAllocateGuard]
+- Replaced hard-coded module offsets with .text-section pattern scanning
+  for CLEO+, MixSets, and Urbanize AllocateBlocks hooks.
+- Pattern: "mov eax, [CPools::ms_p*Pool] ; mov reg, [eax+4]" with ModRM
+  validation to reject false positives.
+- If pattern scan is ambiguous (multiple matches) or finds no match,
+  falls back to CRC32 .text-hash version database.
+- Ultimate fallback retains legacy hard-coded offsets so existing setups
+  continue to work while the new system is being validated.
+- Added psapi dependency for GetModuleInformation / section enumeration.
+- Rationale: previous hard-coded offsets (CLEO+ 0x30590/0x30700/0x30870,
+  MixSets 0x00CCB0, Urbanize 0x018750) break silently when the target
+  module is recompiled or updated.

@@ -1,8 +1,10 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <tlhelp32.h>
+#include <psapi.h>
 #include <intrin.h>
-//
+#pragma comment(lib, "Psapi.lib")
+
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -589,6 +591,11 @@ DWORD WINAPI DeferredPoolAllocateReplayThread(void*);
 void InstallAnimUncompressNullGuard();
 void InstallAnimStaticAssocInitGuard();
 void InstallAnimFrameUpdateSkinnedVelocityGuard();
+
+// Pattern scanning for pool allocate guards
+uintptr_t FindPatternInModuleText(HMODULE module, const uint8_t* pattern, const char* mask, size_t patternLen);
+uint32_t CalculateModuleTextHash(HMODULE module);
+uintptr_t FindAllocateBlocksByPattern(HMODULE module, const char* typeName, uintptr_t expectedPoolPtr);
 void InstallGetBoundCentreNullGuard();
 void InstallGetBoundRectColModelGuard();
 DWORD WINAPI PreloadUrbanizePedModelsThread(void*);
@@ -8011,6 +8018,268 @@ DWORD WINAPI DeferredPoolAllocateReplayThread(void*)
     return 0;
 }
 
+// Pattern scanner: search within a module's .text section only.
+// mask uses 'x' = must match, '?' = wildcard.
+uintptr_t FindPatternInModuleText(HMODULE module, const uint8_t* pattern, const char* mask, size_t patternLen)
+{
+#if defined(_M_IX86)
+    if (!module || !pattern || !mask || patternLen == 0) {
+        return 0;
+    }
+
+    uintptr_t base = reinterpret_cast<uintptr_t>(module);
+    MODULEINFO mi{};
+    if (!GetModuleInformation(GetCurrentProcess(), module, &mi, sizeof(mi))) {
+        return 0;
+    }
+
+    PIMAGE_DOS_HEADER dos = reinterpret_cast<PIMAGE_DOS_HEADER>(base);
+    if (!IsReadableCommitted(base, sizeof(IMAGE_DOS_HEADER)) || dos->e_magic != IMAGE_DOS_SIGNATURE) {
+        return 0;
+    }
+
+    PIMAGE_NT_HEADERS nt = reinterpret_cast<PIMAGE_NT_HEADERS>(base + dos->e_lfanew);
+    if (!IsReadableCommitted(reinterpret_cast<uintptr_t>(nt), sizeof(IMAGE_NT_HEADERS)) ||
+        nt->Signature != IMAGE_NT_SIGNATURE) {
+        return 0;
+    }
+
+    PIMAGE_SECTION_HEADER section = IMAGE_FIRST_SECTION(nt);
+    if (!IsReadableCommitted(reinterpret_cast<uintptr_t>(section),
+                             nt->FileHeader.NumberOfSections * sizeof(IMAGE_SECTION_HEADER))) {
+        return 0;
+    }
+
+    for (WORD i = 0; i < nt->FileHeader.NumberOfSections; ++i, ++section) {
+        if (memcmp(section->Name, ".text\0\0\0", 8) != 0) {
+            continue;
+        }
+
+        uintptr_t textBase = base + section->VirtualAddress;
+        size_t textSize = section->Misc.VirtualSize;
+        if (!IsReadableCommitted(textBase, textSize) || textSize < patternLen) {
+            return 0;
+        }
+
+        const uint8_t* scan = reinterpret_cast<const uint8_t*>(textBase);
+        for (size_t j = 0; j + patternLen <= textSize; ++j) {
+            bool match = true;
+            for (size_t k = 0; k < patternLen; ++k) {
+                if (mask[k] == 'x' && scan[j + k] != pattern[k]) {
+                    match = false;
+                    break;
+                }
+            }
+            if (match) {
+                return textBase + j;
+            }
+        }
+        break;
+    }
+#endif
+    return 0;
+}
+
+// CRC32 of the entire .text section — used as a compact module-version fingerprint.
+uint32_t CalculateModuleTextHash(HMODULE module)
+{
+    uint32_t hash = 0xFFFFFFFFu;
+#if defined(_M_IX86)
+    if (!module) {
+        return 0;
+    }
+
+    uintptr_t base = reinterpret_cast<uintptr_t>(module);
+    MODULEINFO mi{};
+    if (!GetModuleInformation(GetCurrentProcess(), module, &mi, sizeof(mi))) {
+        return 0;
+    }
+
+    PIMAGE_DOS_HEADER dos = reinterpret_cast<PIMAGE_DOS_HEADER>(base);
+    if (!IsReadableCommitted(base, sizeof(IMAGE_DOS_HEADER)) || dos->e_magic != IMAGE_DOS_SIGNATURE) {
+        return 0;
+    }
+
+    PIMAGE_NT_HEADERS nt = reinterpret_cast<PIMAGE_NT_HEADERS>(base + dos->e_lfanew);
+    if (!IsReadableCommitted(reinterpret_cast<uintptr_t>(nt), sizeof(IMAGE_NT_HEADERS)) ||
+        nt->Signature != IMAGE_NT_SIGNATURE) {
+        return 0;
+    }
+
+    PIMAGE_SECTION_HEADER section = IMAGE_FIRST_SECTION(nt);
+    if (!IsReadableCommitted(reinterpret_cast<uintptr_t>(section),
+                             nt->FileHeader.NumberOfSections * sizeof(IMAGE_SECTION_HEADER))) {
+        return 0;
+    }
+
+    for (WORD i = 0; i < nt->FileHeader.NumberOfSections; ++i, ++section) {
+        if (memcmp(section->Name, ".text\0\0\0", 8) != 0) {
+            continue;
+        }
+
+        uintptr_t textBase = base + section->VirtualAddress;
+        size_t textSize = section->Misc.VirtualSize;
+        if (!IsReadableCommitted(textBase, textSize)) {
+            return 0;
+        }
+
+        // Simple CRC32 (IEEE 802.3 polynomial)
+        static uint32_t crcTable[256];
+        static bool crcTableReady = false;
+        if (!crcTableReady) {
+            for (int n = 0; n < 256; ++n) {
+                uint32_t c = static_cast<uint32_t>(n);
+                for (int k = 0; k < 8; ++k) {
+                    c = (c & 1) ? (0xEDB88320u ^ (c >> 1)) : (c >> 1);
+                }
+                crcTable[n] = c;
+            }
+            crcTableReady = true;
+        }
+
+        const uint8_t* data = reinterpret_cast<const uint8_t*>(textBase);
+        for (size_t j = 0; j < textSize; ++j) {
+            hash = crcTable[(hash ^ data[j]) & 0xFF] ^ (hash >> 8);
+        }
+        hash ^= 0xFFFFFFFFu;
+        break;
+    }
+#endif
+    return hash;
+}
+
+// Known-good CLEO+ versions: text-hash -> {objectOffset, vehicleOffset, pedOffset}
+struct KnownCleoPlusVersion {
+    uint32_t textHash;
+    int32_t  objectOffset;
+    int32_t  vehicleOffset;
+    int32_t  pedOffset;
+};
+
+static const KnownCleoPlusVersion kKnownCleoPlusVersions[] = {
+    // CLEO+ current build (text hash will be filled after first run)
+    { 0x00000000, 0x30590, 0x30700, 0x30870 },
+};
+
+static const size_t kKnownCleoPlusVersionCount =
+    sizeof(kKnownCleoPlusVersions) / sizeof(kKnownCleoPlusVersions[0]);
+
+// Try pattern scan first; if ambiguous, fall back to version database.
+uintptr_t FindAllocateBlocksByPattern(HMODULE module, const char* typeName, uintptr_t expectedPoolPtr)
+{
+#if defined(_M_IX86)
+    if (!module) {
+        return 0;
+    }
+
+    // Pattern: mov eax, [expectedPoolPtr]  (A1 xx xx xx xx)
+    // followed by mov reg32, [eax+4]        (8B ?? 04)
+    // The second byte is the ModRM: 0x40 + reg*8  or  0x50 + reg*8 etc.
+    // We wildcard the reg and the disp8 field.
+    uint8_t pattern[8];
+    pattern[0] = 0xA1;
+    std::memcpy(pattern + 1, &expectedPoolPtr, sizeof(expectedPoolPtr));
+    pattern[5] = 0x8B;
+    pattern[6] = 0x70; // wildcard below
+    pattern[7] = 0x04;
+    const char mask[] = "xxxxx xx?x";
+
+    // Scan for all matches in .text
+    uintptr_t base = reinterpret_cast<uintptr_t>(module);
+    MODULEINFO mi{};
+    if (!GetModuleInformation(GetCurrentProcess(), module, &mi, sizeof(mi))) {
+        return 0;
+    }
+
+    PIMAGE_DOS_HEADER dos = reinterpret_cast<PIMAGE_DOS_HEADER>(base);
+    PIMAGE_NT_HEADERS nt = reinterpret_cast<PIMAGE_NT_HEADERS>(base + dos->e_lfanew);
+    PIMAGE_SECTION_HEADER section = IMAGE_FIRST_SECTION(nt);
+    uintptr_t textBase = 0;
+    size_t textSize = 0;
+    for (WORD i = 0; i < nt->FileHeader.NumberOfSections; ++i, ++section) {
+        if (memcmp(section->Name, ".text\0\0\0", 8) == 0) {
+            textBase = base + section->VirtualAddress;
+            textSize = section->Misc.VirtualSize;
+            break;
+        }
+    }
+    if (!textBase || !textSize || !IsReadableCommitted(textBase, textSize)) {
+        return 0;
+    }
+
+    uintptr_t firstMatch = 0;
+    uintptr_t secondMatch = 0;
+    const uint8_t* scan = reinterpret_cast<const uint8_t*>(textBase);
+    const size_t patLen = sizeof(pattern);
+    const size_t maskLen = sizeof(mask) - 1;
+
+    for (size_t j = 0; j + patLen <= textSize && maskLen == patLen; ++j) {
+        bool match = true;
+        for (size_t k = 0; k < patLen; ++k) {
+            if (mask[k] == 'x' && scan[j + k] != pattern[k]) {
+                match = false;
+                break;
+            }
+        }
+        if (!match) {
+            continue;
+        }
+        // Extra validation: the 7th byte (ModRM) must reference [eax+disp8]
+        // ModRM format: mod(2) reg(3) rm(3). [eax+disp8] = mod=01, rm=000.
+        // So top 2 bits = 01 (0x40), bottom 3 bits = 000.
+        uint8_t modrm = scan[j + 6];
+        if ((modrm & 0xC7) != 0x40) {
+            continue; // not [eax+disp8], skip
+        }
+
+        if (!firstMatch) {
+            firstMatch = textBase + j;
+        } else if (!secondMatch) {
+            secondMatch = textBase + j;
+            break; // more than one plausible match — too ambiguous
+        }
+    }
+
+    if (firstMatch && !secondMatch) {
+        Log("pool guard pattern scan: %s single match at 0x%08X", typeName ? typeName : "", firstMatch);
+        return firstMatch;
+    }
+
+    if (firstMatch && secondMatch) {
+        Log("pool guard pattern scan: %s ambiguous (%d matches), falling back to version hash",
+            typeName ? typeName : "", 2);
+    } else {
+        Log("pool guard pattern scan: %s no match, falling back to version hash", typeName ? typeName : "");
+    }
+
+    // Fallback: version hash database
+    uint32_t textHash = CalculateModuleTextHash(module);
+    Log("pool guard version hash: %s textHash=0x%08X", typeName ? typeName : "", textHash);
+
+    for (size_t i = 0; i < kKnownCleoPlusVersionCount; ++i) {
+        if (kKnownCleoPlusVersions[i].textHash == textHash) {
+            int32_t offset = 0;
+            if (expectedPoolPtr == kOriginalObjectPoolPtr) {
+                offset = kKnownCleoPlusVersions[i].objectOffset;
+            } else if (expectedPoolPtr == kOriginalVehiclePoolPtr) {
+                offset = kKnownCleoPlusVersions[i].vehicleOffset;
+            } else if (expectedPoolPtr == kOriginalPedPoolPtr) {
+                offset = kKnownCleoPlusVersions[i].pedOffset;
+            }
+            if (offset != 0) {
+                uintptr_t addr = base + offset;
+                Log("pool guard version hash: %s matched entry %zu offset=0x%X addr=0x%08X",
+                    typeName ? typeName : "", i, offset, addr);
+                return addr;
+            }
+        }
+    }
+
+    Log("pool guard version hash: %s no known entry for hash 0x%08X", typeName ? typeName : "", textHash);
+#endif
+    return 0;
+}
+
 uintptr_t CreatePoolAllocateGuardStub(uintptr_t poolPtrAddress, uintptr_t continueAddress)
 {
 #if defined(_M_IX86)
@@ -8144,21 +8413,41 @@ void InstallCleoPlusPoolAllocateGuard()
     }
 
     const uintptr_t base = reinterpret_cast<uintptr_t>(cleoPlus);
+
+    // Try pattern scan first, then fall back to known-version hash table.
+    uintptr_t objAddr = FindAllocateBlocksByPattern(cleoPlus, "CLEO+ ObjectExtendedData", kOriginalObjectPoolPtr);
+    uintptr_t vehAddr = FindAllocateBlocksByPattern(cleoPlus, "CLEO+ VehicleExtendedData", kOriginalVehiclePoolPtr);
+    uintptr_t pedAddr = FindAllocateBlocksByPattern(cleoPlus, "CLEO+ PedExtendedData", kOriginalPedPoolPtr);
+
+    // If pattern scan failed entirely, use the legacy hard-coded offsets as ultimate fallback.
+    if (!objAddr) {
+        objAddr = base + 0x30590;
+        Log("CLEO+ pool allocate guard: Object pattern failed, using legacy fallback 0x%08X", objAddr);
+    }
+    if (!vehAddr) {
+        vehAddr = base + 0x30700;
+        Log("CLEO+ pool allocate guard: Vehicle pattern failed, using legacy fallback 0x%08X", vehAddr);
+    }
+    if (!pedAddr) {
+        pedAddr = base + 0x30870;
+        Log("CLEO+ pool allocate guard: Ped pattern failed, using legacy fallback 0x%08X", pedAddr);
+    }
+
     InstallOneCleoPlusPoolAllocateGuard(
         "ObjectExtendedData::AllocateBlocks",
-        base + 0x30590,
+        objAddr,
         kOriginalObjectPoolPtr,
         reinterpret_cast<uintptr_t>(Bridge_CleoPlus_ObjectAllocateBlocks_PoolGuard),
         &g_cleoPlusObjectAllocateBlocksContinue);
     InstallOneCleoPlusPoolAllocateGuard(
         "VehicleExtendedData::AllocateBlocks",
-        base + 0x30700,
+        vehAddr,
         kOriginalVehiclePoolPtr,
         reinterpret_cast<uintptr_t>(Bridge_CleoPlus_VehicleAllocateBlocks_PoolGuard),
         &g_cleoPlusVehicleAllocateBlocksContinue);
     InstallOneCleoPlusPoolAllocateGuard(
         "PedExtendedData::AllocateBlocks",
-        base + 0x30870,
+        pedAddr,
         kOriginalPedPoolPtr,
         reinterpret_cast<uintptr_t>(Bridge_CleoPlus_PedAllocateBlocks_PoolGuard),
         &g_cleoPlusPedAllocateBlocksContinue);
@@ -8177,11 +8466,15 @@ void InstallMixSetsPoolAllocateGuard()
         return;
     }
 
-    const uintptr_t base = reinterpret_cast<uintptr_t>(mixSets);
-    const uintptr_t patchAddress = base + 0x00CCB0;
+    uintptr_t pedAddr = FindAllocateBlocksByPattern(mixSets, "MixSets PedExtendedData", kOriginalPedPoolPtr);
+    if (!pedAddr) {
+        pedAddr = reinterpret_cast<uintptr_t>(mixSets) + 0x00CCB0;
+        Log("MixSets pool allocate guard: pattern failed, using legacy fallback 0x%08X", pedAddr);
+    }
+
     InstallOneCleoPlusPoolAllocateGuard(
         "MixSets PedExtendedData::AllocateBlocks",
-        patchAddress,
+        pedAddr,
         kOriginalPedPoolPtr,
         reinterpret_cast<uintptr_t>(Bridge_MixSets_PedAllocateBlocks_PoolGuard),
         &g_mixSetsPedAllocateBlocksContinue);
@@ -8227,11 +8520,15 @@ void InstallUrbanizePoolAllocateGuard()
         return;
     }
 
-    const uintptr_t base = reinterpret_cast<uintptr_t>(urbanize);
-    const uintptr_t patchAddress = base + 0x018750;
+    uintptr_t pedAddr = FindAllocateBlocksByPattern(urbanize, "Urbanize PedExtendedData", kOriginalPedPoolPtr);
+    if (!pedAddr) {
+        pedAddr = reinterpret_cast<uintptr_t>(urbanize) + 0x018750;
+        Log("Urbanize pool allocate guard: pattern failed, using legacy fallback 0x%08X", pedAddr);
+    }
+
     InstallOneCleoPlusPoolAllocateGuard(
         "Urbanize PedExtendedData::AllocateBlocks",
-        patchAddress,
+        pedAddr,
         kOriginalPedPoolPtr,
         0,
         &g_urbanizePedAllocateBlocksContinue);
