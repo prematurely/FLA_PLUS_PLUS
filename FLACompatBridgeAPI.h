@@ -55,4 +55,5 @@ uintptr_t __stdcall FLACompatBridge_GetModelInfo(uint32_t modelId);
 uintptr_t __stdcall FLACompatBridge_GetStreamingInfo(uint32_t modelId);
 int __stdcall FLACompatBridge_ReadStreamingInfo(uint32_t modelId, void* out, uint32_t outSize);
 int __stdcall FLACompatBridge_GetPoolInfo(uint32_t poolId, uintptr_t* poolPtr, uint32_t* capacity);
+int __stdcall FLACompatBridge_IsModelLoaded(uint32_t modelId);
 }

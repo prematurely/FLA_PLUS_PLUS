@@ -37,3 +37,22 @@ FLA++ (FLACompatBridge) Changelog
 - The 0x30590 pattern is still patched because it has the same prologue
   shape and the guard is benign, but the name now accurately reflects
   that it is not a true ObjectExtendedData::AllocateBlocks.
+
+[LazyCPool Immediate Deferred Allocate Trigger]
+- When EnsureLazyCPoolReady successfully creates a missing pool,
+  immediately trigger any deferred PoolAllocateGuard replays for that
+  pool instead of waiting for DeferredPoolAllocateReplayThread polling.
+- This reduces the window where plugin-sdk ExtendedData blocks are not
+  yet allocated after a pool is lazily created, mitigating potential
+  timing/capacity mismatches between the pool and ExtendedData arrays.
+
+[Export FLACompatBridge_IsModelLoaded API]
+- New C export: FLACompatBridge_IsModelLoaded(uint32_t modelId)
+  Returns 1 if the model's streaming load state == 1, 0 otherwise.
+- Internally uses Bridge's existing GetStreamingLoadState via FLA's
+  relocated CStreaming::ms_aInfoForModel table.
+- This API is provided for CLEO+ and other modules to call instead of
+  their own hard-coded streaming info checks, which fail in high-ID mode.
+- CLEO+ FLACompat::IsModelLoaded currently returns true unconditionally
+  in high-ID mode because FLA does not export load state. Bridge now
+  provides this capability via the export.

@@ -28,6 +28,7 @@
 #pragma comment(linker, "/EXPORT:FLACompatBridge_RequestSpecialActor=_FLACompatBridge_RequestSpecialActor@8")
 #pragma comment(linker, "/EXPORT:FLACompatBridge_RequestSpecialActorByCode=_FLACompatBridge_RequestSpecialActorByCode@8")
 #pragma comment(linker, "/EXPORT:FLACompatBridge_ReleaseSpecialActor=_FLACompatBridge_ReleaseSpecialActor@4")
+#pragma comment(linker, "/EXPORT:FLACompatBridge_IsModelLoaded=_FLACompatBridge_IsModelLoaded@4")
 #endif
 
 namespace {
@@ -540,6 +541,7 @@ bool IsExecutableCommitted(uintptr_t address);
 bool IsValidCPool(uintptr_t pool);
 bool ReadCorePoolPointers(uint32_t* pedPool, uint32_t* vehiclePool, uint32_t* objectPool, uint32_t* colModelPool);
 bool EnsureLazyCPoolReady(uintptr_t poolPtr, const char* reason);
+void TriggerDeferredPoolAllocatesForPool(uintptr_t poolPtrAddress);
 bool EnsureLazyCoreCPoolsReady(const char* reason);
 bool IsReasonableWorldCoord(float value);
 uintptr_t DecodeRel32JumpTarget(uintptr_t address);
@@ -4820,7 +4822,62 @@ bool EnsureLazyCPoolReady(uintptr_t poolPtr, const char* reason)
         spec->iniKey);
 
     InterlockedExchange(&spec->state, IsValidCPool(finalPool) ? 2 : -1);
+
+    if (created && IsValidCPool(finalPool)) {
+        TriggerDeferredPoolAllocatesForPool(spec->poolPtr);
+    }
+
     return created && IsValidCPool(finalPool);
+}
+
+void TriggerDeferredPoolAllocatesForPool(uintptr_t poolPtrAddress)
+{
+    if (!poolPtrAddress || !g_config.enableDeferredPoolAllocateReplay) {
+        return;
+    }
+
+    DeferredPoolAllocate toRun[kMaxDeferredPoolAllocates]{};
+    uint32_t runCount = 0;
+
+    EnterCriticalSection(&g_deferredPoolAllocateLock);
+    for (uint32_t i = 0; i < g_deferredPoolAllocateCount && runCount < kMaxDeferredPoolAllocates; ++i) {
+        DeferredPoolAllocate& item = g_deferredPoolAllocates[i];
+        if (item.completed || item.poolPtrAddress != poolPtrAddress) {
+            continue;
+        }
+
+        uintptr_t pool = 0;
+        if (!SafeReadU32(item.poolPtrAddress, reinterpret_cast<uint32_t*>(&pool)) || !pool) {
+            continue;
+        }
+
+        item.completed = 1;
+        toRun[runCount++] = item;
+    }
+    LeaveCriticalSection(&g_deferredPoolAllocateLock);
+
+    for (uint32_t i = 0; i < runCount; ++i) {
+        uintptr_t pool = 0;
+        if (!SafeReadU32(toRun[i].poolPtrAddress, reinterpret_cast<uint32_t*>(&pool)) || !pool) {
+            continue;
+        }
+
+        __try {
+            Bridge_InvokePoolAllocateContinue(toRun[i].continueAddress, toRun[i].thisPtr, pool);
+            Log("lazy CPool registry: immediate deferred allocate module=%s pool=0x%08X continue=0x%08X this=0x%08X",
+                toRun[i].moduleName,
+                pool,
+                toRun[i].continueAddress,
+                toRun[i].thisPtr);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) {
+            Log("lazy CPool registry: immediate deferred allocate exception module=%s pool=0x%08X continue=0x%08X this=0x%08X",
+                toRun[i].moduleName,
+                pool,
+                toRun[i].continueAddress,
+                toRun[i].thisPtr);
+        }
+    }
 }
 
 bool EnsureLazyCoreCPoolsReady(const char* reason)
@@ -10951,6 +11008,14 @@ extern "C" __declspec(dllexport) int __stdcall FLACompatBridge_RequestSpecialAct
 extern "C" __declspec(dllexport) int __stdcall FLACompatBridge_ReleaseSpecialActor(uint32_t modelId)
 {
     return ReleaseConfiguredSpecialActor(modelId) ? 1 : 0;
+}
+
+extern "C" __declspec(dllexport) int __stdcall FLACompatBridge_IsModelLoaded(uint32_t modelId)
+{
+    if (!g_fileIdCapacity) {
+        RefreshFlaRuntimeState();
+    }
+    return GetStreamingLoadState(modelId) == 1 ? 1 : 0;
 }
 
 extern "C" __declspec(dllexport) void FLACompatBridge_KeepExport()
