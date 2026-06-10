@@ -1149,7 +1149,7 @@ void WriteDefaultBridgeConfigIfMissing()
         "Rule001Old = 0x00A9B0C8\n"
         "Rule001Target = CModelInfo\n"
         "Rule001Align4 = 1\n"
-        "Rule001ExecutableOnly = 0\n"
+        "Rule001ExecutableOnly = 1\n"
         "Rule001AuditOnly = 0\n"
         "Rule001MaxPatchesPerModule = 256\n"
         "Rule002Enabled = 1\n"
@@ -1157,7 +1157,7 @@ void WriteDefaultBridgeConfigIfMissing()
         "Rule002Old = 0x008E4CC0\n"
         "Rule002Target = CStreaming\n"
         "Rule002Align4 = 1\n"
-        "Rule002ExecutableOnly = 0\n"
+        "Rule002ExecutableOnly = 1\n"
         "Rule002AuditOnly = 0\n"
         "Rule002MaxPatchesPerModule = 256\n"
         "Rule003Enabled = 1\n"
@@ -1165,7 +1165,7 @@ void WriteDefaultBridgeConfigIfMissing()
         "Rule003Old = 0x00BA86F0\n"
         "Rule003Target = RadarTrace\n"
         "Rule003Align4 = 1\n"
-        "Rule003ExecutableOnly = 0\n"
+        "Rule003ExecutableOnly = 1\n"
         "Rule003AuditOnly = 0\n"
         "Rule003MaxPatchesPerModule = 512\n"
         "\n"
@@ -9570,6 +9570,23 @@ void RewriteOneModuleConstants(const MODULEENTRY32& me, bool logDetails)
                 if ((rule.align4 && (patchAddress & 3)) ||
                     (rule.executableOnly && !regionExecutable)) {
                     continue;
+                }
+                if (!regionExecutable && i >= 1) {
+                    uint8_t prevByte = buffer[i - 1];
+                    bool looksLikeOperand =
+                        prevByte == 0xA1 || prevByte == 0xA3 ||
+                        prevByte == 0x68 ||
+                        prevByte == 0x05 || prevByte == 0x0D ||
+                        prevByte == 0x15 || prevByte == 0x1D ||
+                        prevByte == 0x25 || prevByte == 0x2D ||
+                        prevByte == 0x35 || prevByte == 0x3D ||
+                        prevByte == 0xB8 || prevByte == 0xB9 ||
+                        prevByte == 0xBA || prevByte == 0xBB ||
+                        prevByte == 0xBC || prevByte == 0xBD ||
+                        prevByte == 0xBE || prevByte == 0xBF;
+                    if (!looksLikeOperand) {
+                        continue;
+                    }
                 }
                 ++hits;
                 const bool ruleDenied = RuleDeniedForRuntimeRewrite(rule, me.szModule, me.szExePath);

@@ -56,3 +56,15 @@ FLA++ (FLACompatBridge) Changelog
 - CLEO+ FLACompat::IsModelLoaded currently returns true unconditionally
   in high-ID mode because FLA does not export load state. Bridge now
   provides this capability via the export.
+
+2026-06-10
+----------
+[RuntimeRewrite Data Section False Positive Fix]
+- Changed default rule ExecutableOnly from 0 to 1 for all three built-in
+  rules (CModelInfo, CStreaming, RadarTrace).
+- Added heuristic filter for non-executable regions: when ExecutableOnly=0,
+  matches in data sections are now rejected unless the preceding byte is a
+  plausible instruction opcode that takes a 32-bit immediate operand
+  (A1/A3, 68, B8-BF, 05/0D/15/1D/25/2D/35/3D).
+- This prevents patching data values that happen to coincidentally equal
+  the old address constant (e.g. a struct field, vtable entry, or padding).
