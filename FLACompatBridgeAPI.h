@@ -5,6 +5,10 @@
 // Optional public API exported by scripts\FLACompatBridge.asi
 // Load with GetModuleHandleA("FLACompatBridge.asi") and GetProcAddress.
 
+#define FLA_COMPAT_BRIDGE_PRODUCT_NAME "FLA++"
+#define FLA_COMPAT_BRIDGE_PRODUCT_VERSION "1.10c1"
+#define FLA_COMPAT_BRIDGE_API_VERSION 6
+
 enum FLACompatBridgeRelocatedAddress : uint32_t {
     FLA_BRIDGE_ADDR_CMODELINFO_PTRS = 1,
     FLA_BRIDGE_ADDR_CSTREAMING_INFO = 2,

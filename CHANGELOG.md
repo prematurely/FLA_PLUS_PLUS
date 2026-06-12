@@ -1,6 +1,20 @@
 FLA++ (FLACompatBridge) Changelog
 ==================================
 
+v1.10c1 - 2026-06-12
+--------------------
+- Post-v1.00 compatibility release candidate for FLA++.
+- Product version follows the existing FLA_PLUS_PLUS release line. This build
+  targets fastman92 Limit Adjuster 7.6 but is not versioned as 7.6.
+- Adds guarded ProperShaders compatibility for the FLA AddTxdSlot hook conflict,
+  shader-name null return path, and CModelInfo render-range relocation mismatch.
+- Adds TXD/RwTexDictionary pointer guards, a WidescreenFix sprite-name guard,
+  and additional animation association/frame update guards for crash and stuck
+  animation recovery.
+- Runtime filename and exported API namespace remain FLACompatBridge for
+  compatibility.
+- API version remains 6; this release number does not imply an ABI break.
+
 2026-06-09
 ----------
 [Pattern Scanning + Version Hash Fallback for PoolAllocateGuard]

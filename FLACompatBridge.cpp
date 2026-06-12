@@ -33,6 +33,8 @@
 
 namespace {
 constexpr const char* kDisplayName = "FLA++";
+constexpr const char* kProductVersion = "1.10c1";
+constexpr uint32_t kApiVersion = 6;
 constexpr const char* kLogPath = "scripts\\FLACompatBridge.log";
 constexpr const char* kConfigPath = "scripts\\FLACompatBridge.ini";
 
@@ -67,6 +69,7 @@ struct BridgeConfig {
     char modernModuleDenylist[512]{};
     char forceNoRuntimeRewrite[512]{};
     char forceNoAutoPoolGuard[512]{};
+    bool enableProperShadersCompat = true;
     bool enableRuntimeRewrite = false;
     bool enableRuntimeRewriteRescan = false;
     bool enableRuntimeRewriteRuleTable = true;
@@ -294,10 +297,17 @@ uintptr_t g_mixSetsPedAllocateBlocksContinue = 0;
 uintptr_t g_urbanizePedAllocateBlocksContinue = 0;
 uintptr_t g_animUncompressContinue = 0;
 uintptr_t g_animStaticAssocInitContinue = 0;
+uintptr_t g_animUpdateBlendContinue = 0;
+uintptr_t g_animFrameUpdateSkinnedContinue = 0;
 uintptr_t g_animFrameUpdateSkinnedVelocityContinue = 0;
 uintptr_t g_flaTrainTypeCarriagesLoaderThis = 0;
 uintptr_t g_flaTrainTypeCarriagesLoadFunc = 0;
+uintptr_t g_widescreenFixSpriteNameGuardContinue = 0;
+uintptr_t g_widescreenFixSpriteNameGuardSkip = 0;
 uintptr_t g_lastValidAnimHierarchy = 0;
+constexpr size_t kMaxNeutralizedAnimAssociations = 64;
+uintptr_t g_neutralizedAnimAssociations[kMaxNeutralizedAnimAssociations]{};
+LONG g_neutralizedAnimAssociationCursor = 0;
 uintptr_t g_radarTraceBase = 0;
 uint32_t g_radarTraceLimit = 175;
 alignas(16) uint32_t g_boundCentreScratch[4]{};
@@ -538,6 +548,7 @@ bool CopyMemoryWithProtect(uintptr_t destination, uintptr_t source, size_t size)
 bool IsReadableCommitted(uintptr_t address, size_t size);
 bool IsWritableCommitted(uintptr_t address, size_t size);
 bool IsExecutableCommitted(uintptr_t address);
+extern "C" int __stdcall Bridge_IsReadableMemory(uintptr_t address, size_t size);
 bool IsValidCPool(uintptr_t pool);
 bool ReadCorePoolPointers(uint32_t* pedPool, uint32_t* vehiclePool, uint32_t* objectPool, uint32_t* colModelPool);
 bool EnsureLazyCPoolReady(uintptr_t poolPtr, const char* reason);
@@ -558,7 +569,10 @@ bool IsFlaDifficultHighIdMode();
 int32_t ReadExtendedIdFrom16BitField(const void* field);
 void RuntimeRewriteHardcodedAddressConstants(bool logDetails = true);
 DWORD WINAPI RuntimeRewriteRescanThread(void*);
+DWORD WINAPI EarlyProperShadersCompatThread(void*);
 void LoadBridgeCheatStrings();
+void ApplyProperShadersCompat();
+void InstallTxdLoadDictionaryWriteGuard();
 void InstallPickupModelLoadGuard();
 bool IsSaneRadarCoord(float x, float y, float z);
 void InstallFlaTrainInitHookRepair();
@@ -592,6 +606,8 @@ void InstallAutoPoolAllocateGuards();
 DWORD WINAPI DeferredPoolAllocateReplayThread(void*);
 void InstallAnimUncompressNullGuard();
 void InstallAnimStaticAssocInitGuard();
+void InstallAnimUpdateBlendGuard();
+void InstallAnimFrameUpdateSkinnedGuard();
 void InstallAnimFrameUpdateSkinnedVelocityGuard();
 
 // Pattern scanning for pool allocate guards
@@ -605,6 +621,7 @@ bool ContainsCaseInsensitive(const char* haystack, const char* needle);
 extern "C" bool __stdcall Bridge_IsValidAnimHierarchy(uintptr_t hierarchy);
 extern "C" bool __stdcall Bridge_IsWritableMemory(uintptr_t address, size_t size);
 extern "C" bool __stdcall Bridge_IsExecutableMemory(uintptr_t address);
+extern "C" void __stdcall Bridge_LogInvalidTxdLoadDictionaryWrite(uintptr_t slot, uintptr_t dictionary, uintptr_t index);
 extern "C" uintptr_t __stdcall Bridge_GetSafeCleoThunkTarget(uintptr_t target);
 extern "C" void __stdcall Bridge_CallCleoDispatchTargetSafely(uintptr_t target, uintptr_t dispatchObject);
 extern "C" CleoExports::OpcodeResult __stdcall Bridge_CleoPlus_InitExtendedObjectVars_Guard(RunningScriptLite* thread);
@@ -615,6 +632,7 @@ extern "C" void __stdcall Bridge_InvokePoolAllocateContinue(uintptr_t continueAd
 extern "C" void __stdcall Bridge_LogInvalidAnimHierarchy(uintptr_t hierarchy, uintptr_t returnAddress, uintptr_t stack);
 extern "C" bool __stdcall Bridge_IsValidStaticAssociation(uintptr_t staticAssociation);
 extern "C" void __stdcall Bridge_RepairInvalidStaticAssociation(uintptr_t runtimeAssociation, uintptr_t staticAssociation);
+extern "C" bool __stdcall Bridge_PrepareAnimAssociationUpdate(uintptr_t association);
 extern "C" bool __stdcall Bridge_PrepareAnimFrameUpdateData(uintptr_t updateData);
 extern "C" void __stdcall Bridge_LogInvalidBoundCentreOut(uintptr_t entity, uintptr_t outVec, uintptr_t returnAddress, uintptr_t stack);
 extern "C" bool __stdcall Bridge_HasValidBoundRectColModel(uintptr_t entity);
@@ -833,6 +851,30 @@ extern "C" __declspec(naked) void Bridge_AnimStaticAssocInit_Guard()
     }
 }
 
+extern "C" __declspec(naked) void Bridge_AnimUpdateBlend_Guard()
+{
+    __asm
+    {
+        push ecx
+        push ecx
+        call Bridge_PrepareAnimAssociationUpdate
+        test al, al
+        jz skipAssociation
+        pop ecx
+
+        fld dword ptr [esp + 4]
+        push esi
+        mov esi, ecx
+        push dword ptr [g_animUpdateBlendContinue]
+        retn
+
+    skipAssociation:
+        pop ecx
+        xor al, al
+        ret 4
+    }
+}
+
 extern "C" __declspec(naked) void Bridge_AnimFrameUpdateSkinnedVelocity_Guard()
 {
     __asm
@@ -849,6 +891,29 @@ extern "C" __declspec(naked) void Bridge_AnimFrameUpdateSkinnedVelocity_Guard()
         push ebp
         push esi
         push dword ptr [g_animFrameUpdateSkinnedVelocityContinue]
+        retn
+
+    skipFrameUpdate:
+        retn
+    }
+}
+
+extern "C" __declspec(naked) void Bridge_AnimFrameUpdateSkinned_Guard()
+{
+    __asm
+    {
+        push eax
+        mov eax, [esp + 0x0C]
+        push eax
+        call Bridge_PrepareAnimFrameUpdateData
+        test al, al
+        pop eax
+        jz skipFrameUpdate
+
+        sub esp, 0x3C
+        push ebp
+        mov ebp, [esp + 0x44]
+        push dword ptr [g_animFrameUpdateSkinnedContinue]
         retn
 
     skipFrameUpdate:
@@ -935,6 +1000,166 @@ extern "C" __declspec(naked) void Bridge_FlaTrainInit_LoadPreserveEax()
         cmp eax, ebx
 
         push 0x006F744B
+        retn
+    }
+}
+
+extern "C" int __stdcall Bridge_IsReadableMemory(uintptr_t address, size_t size)
+{
+    return IsReadableCommitted(address, size) ? 1 : 0;
+}
+
+extern "C" __declspec(naked) void Bridge_TxdLoadDictionaryWriteGuard()
+{
+    __asm
+    {
+        push eax
+        push ecx
+        push edx
+        push 4
+        push esi
+        call Bridge_IsWritableMemory
+        test al, al
+        pop edx
+        pop ecx
+        pop eax
+        jz invalidSlot
+
+        mov dword ptr [esi], eax
+        test eax, eax
+        jz noDictionary
+
+        push ebx
+        push 0x00731E18
+        retn
+
+    noDictionary:
+        push 0x00731E20
+        retn
+
+    invalidSlot:
+        push eax
+        push ecx
+        push edx
+        push ebx
+        push eax
+        push esi
+        call Bridge_LogInvalidTxdLoadDictionaryWrite
+        pop edx
+        pop ecx
+        pop eax
+        xor eax, eax
+        push 0x00731E2D
+        retn
+    }
+}
+
+extern "C" __declspec(naked) void Bridge_RwTexDictionaryFindNamedTexture_DictGuard()
+{
+    __asm
+    {
+        add eax, 8
+        push ecx
+        push edx
+        push eax
+        push 4
+        push eax
+        call Bridge_IsReadableMemory
+        test al, al
+        pop eax
+        pop edx
+        pop ecx
+        jz invalidDict
+
+        push ebp
+        push esi
+        push edi
+        mov ebx, dword ptr [eax]
+        mov dword ptr [esp + 0x14], eax
+        push 0x007F3A01
+        retn
+
+    invalidDict:
+        pop ebx
+        xor eax, eax
+        retn
+    }
+}
+
+extern "C" __declspec(naked) void Bridge_RwTexDictionaryFindNamedTexture_NameGuard()
+{
+    __asm
+    {
+        push eax
+        push edx
+        push ecx
+        push 1
+        push ecx
+        call Bridge_IsReadableMemory
+        test al, al
+        pop ecx
+        pop edx
+        pop eax
+        jz invalidName
+
+        mov esi, ecx
+        mov edi, ebp
+        mov cl, byte ptr [esi]
+        push 0x007F3A19
+        retn
+
+    invalidName:
+        push 0x007F3A5C
+        retn
+    }
+}
+
+extern "C" __declspec(naked) void Bridge_RwTexDictionaryFindNamedTexture_LinkGuard()
+{
+    __asm
+    {
+        push eax
+        push edx
+        push ecx
+        push ebx
+        push 4
+        push ebx
+        call Bridge_IsReadableMemory
+        test al, al
+        pop ebx
+        pop ecx
+        pop edx
+        pop eax
+        jz invalidLink
+
+        mov ebx, dword ptr [ebx]
+        mov eax, dword ptr [esp + 0x14]
+        push 0x007F3A58
+        retn
+
+    invalidLink:
+        push 0x007F3A5C
+        retn
+    }
+}
+
+extern "C" __declspec(naked) void Bridge_WidescreenFixSpriteNameGuard()
+{
+    __asm
+    {
+        cmp ecx, 0x10000
+        jb skipSprite
+
+        mov ecx, dword ptr [ecx]
+        cmp ecx, 0x10000
+        jb skipSprite
+
+        add ecx, 0x10
+        push dword ptr [g_widescreenFixSpriteNameGuardContinue]
+        retn
+
+    skipSprite:
+        push dword ptr [g_widescreenFixSpriteNameGuardSkip]
         retn
     }
 }
@@ -1124,6 +1349,8 @@ void WriteDefaultBridgeConfigIfMissing()
         "ModernModuleDenylist = SilentPatch;WidescreenFix;WindowedMode;CrashInfo;modloader.asi;MixSets;FLACompatBridge;fastman92;DINPUT8;vorbis;_noDEP;rundll32exefix;iii.vc.sa.limitadjuster;ImgLimitAdjuster;ProperFixes;ProperShaders\n"
         "ForceNoRuntimeRewrite = \n"
         "ForceNoAutoPoolGuard = ImprovedStreaming\n"
+        "; ProperShaders writes a TXD hook inside FLA's CTxdStore::AddTxdSlot JMP. Keep this on if ProperShaders is loaded.\n"
+        "EnableProperShadersCompat = 1\n"
         "\n"
         "[RuntimeRewrite]\n"
         "; Runtime rewrite patches loaded modules in memory. Keep 0 unless testing a named module.\n"
@@ -1523,6 +1750,7 @@ void LoadBridgeConfig()
         "SilentPatch;WidescreenFix;WindowedMode;CrashInfo;modloader.asi;MixSets;FLACompatBridge;fastman92;DINPUT8;vorbis;_noDEP;rundll32exefix;iii.vc.sa.limitadjuster;ImgLimitAdjuster");
     ReadBridgeText("ForceNoRuntimeRewrite", g_config.forceNoRuntimeRewrite, sizeof(g_config.forceNoRuntimeRewrite));
     ReadBridgeText("ForceNoAutoPoolGuard", g_config.forceNoAutoPoolGuard, sizeof(g_config.forceNoAutoPoolGuard));
+    g_config.enableProperShadersCompat = ReadBridgeBool("EnableProperShadersCompat", g_config.enableProperShadersCompat);
     g_config.enableRuntimeRewrite = ReadBridgeBool("EnableRuntimeRewrite", g_config.enableRuntimeRewrite);
     g_config.enableRuntimeRewriteRescan = ReadBridgeBool("EnableRuntimeRewriteRescan", g_config.enableRuntimeRewriteRescan);
     g_config.enableRuntimeRewriteRuleTable = ReadBridgeBool("EnableRuntimeRewriteRuleTable", g_config.enableRuntimeRewriteRuleTable);
@@ -1731,12 +1959,13 @@ void LogBridgeConfig()
         g_config.enableUrbanizeCompat ? 1 : 0,
         g_config.enableTaxi77Compat ? 1 : 0,
         g_config.enableSanPabloCompat ? 1 : 0);
-    Log("bridge config: modulePolicy=%d legacyAllowlist='%s' modernDenylist='%s' forceNoRuntimeRewrite='%s' forceNoAutoPoolGuard='%s'",
+    Log("bridge config: modulePolicy=%d legacyAllowlist='%s' modernDenylist='%s' forceNoRuntimeRewrite='%s' forceNoAutoPoolGuard='%s' properShadersCompat=%d",
         g_config.enableModulePolicy ? 1 : 0,
         g_config.legacyModuleAllowlist,
         g_config.modernModuleDenylist,
         g_config.forceNoRuntimeRewrite,
-        g_config.forceNoAutoPoolGuard);
+        g_config.forceNoAutoPoolGuard,
+        g_config.enableProperShadersCompat ? 1 : 0);
     Log("bridge config: VEH=%d exceptionDiag=%d boundCentreVEH=%d loopBreaker=%d loopTerminate=%d loopThreshold=%d maxExceptionLogs=%d moduleSnapshot=%d riskScan=%d relocatedDiag=%d poolDiag=%d crashClass=%d rewriteAudit=%d olaOverlapAudit=%d rewrite=%d rewriteRescan=%d rewriteRuleTable=%d rewriteRules=%u rescanDelay=%d rescanIterations=%d rescanInterval=%d defaultMaxPatches=%d allowlist='%s' denylist='%s'",
         g_config.enableVectoredExceptionHandler ? 1 : 0,
         g_config.enableExceptionDiagnostics ? 1 : 0,
@@ -3665,16 +3894,18 @@ uintptr_t ResolveCleoThunk26720FinalTarget(uintptr_t dispatchObject, uintptr_t t
     if (logInvalid) {
         static LONG logCount = 0;
         const LONG count = InterlockedIncrement(&logCount);
-        if (count <= 64) {
+        if (count <= 6) {
             Log("CLEO+ dispatch guard: skipped thunk26720 final target object=0x%08X inner=0x%08X thunk=0x%08X final=0x%08X executable=%d",
                 dispatchObject,
                 innerObject,
                 thunkTarget,
                 finalTarget,
                 finalTarget ? (IsExecutableCommitted(finalTarget) ? 1 : 0) : 0);
-            LogMemoryRegion("cleo-thunk26720-object", dispatchObject);
-            LogMemoryRegion("cleo-thunk26720-inner", innerObject);
-            LogMemoryRegion("cleo-thunk26720-final", finalTarget);
+            if (count <= 2) {
+                LogMemoryRegion("cleo-thunk26720-object", dispatchObject);
+                LogMemoryRegion("cleo-thunk26720-inner", innerObject);
+                LogMemoryRegion("cleo-thunk26720-final", finalTarget);
+            }
         }
     }
 
@@ -3825,15 +4056,17 @@ extern "C" uintptr_t __stdcall Bridge_GetSafeCleoDispatchTarget(uintptr_t dispat
 
     static LONG logCount = 0;
     const LONG count = InterlockedIncrement(&logCount);
-    if (count <= 32) {
+    if (count <= 6) {
         Log("CLEO+ dispatch guard: skipped invalid dispatch object=0x%08X vtable=0x%08X target=0x%08X executable=%d",
             dispatchObject,
             vtable,
             target,
             target ? (IsExecutableCommitted(target) ? 1 : 0) : 0);
-        LogMemoryRegion("cleo-dispatch-object", dispatchObject);
-        LogMemoryRegion("cleo-dispatch-vtable", vtable);
-        LogMemoryRegion("cleo-dispatch-target", target);
+        if (count <= 2) {
+            LogMemoryRegion("cleo-dispatch-object", dispatchObject);
+            LogMemoryRegion("cleo-dispatch-vtable", vtable);
+            LogMemoryRegion("cleo-dispatch-target", target);
+        }
     }
 
     return 0;
@@ -3955,6 +4188,23 @@ extern "C" CleoExports::OpcodeResult __stdcall Bridge_CleoPlus_GetExtendedObject
         thread);
 }
 
+extern "C" void __stdcall Bridge_LogInvalidTxdLoadDictionaryWrite(uintptr_t slot, uintptr_t dictionary, uintptr_t index)
+{
+    static LONG logCount = 0;
+    const LONG count = InterlockedIncrement(&logCount);
+    if (count > 16) {
+        return;
+    }
+
+    Log("txd load guard: blocked invalid dictionary write slot=0x%08X dictionary=0x%08X index=0x%08X",
+        slot,
+        dictionary,
+        index);
+    LogMemoryRegion("txd-load-slot", slot);
+    LogMemoryRegion("txd-load-dictionary", dictionary);
+    LogStackModules(reinterpret_cast<uintptr_t>(_AddressOfReturnAddress()) + sizeof(uintptr_t));
+}
+
 extern "C" void __stdcall Bridge_LogInvalidBoundCentreOut(uintptr_t entity, uintptr_t outVec, uintptr_t returnAddress, uintptr_t stack)
 {
     static LONG logCount = 0;
@@ -4012,7 +4262,7 @@ extern "C" void __stdcall Bridge_LogInvalidAnimHierarchy(uintptr_t hierarchy, ui
 {
     static LONG logCount = 0;
     const LONG count = InterlockedIncrement(&logCount);
-    if (count > 24) {
+    if (count > 4) {
         return;
     }
 
@@ -4023,8 +4273,10 @@ extern "C" void __stdcall Bridge_LogInvalidAnimHierarchy(uintptr_t hierarchy, ui
         returnAddress,
         moduleName,
         moduleBase ? returnAddress - moduleBase : 0);
-    LogMemoryRegion("anim-hierarchy", hierarchy);
-    LogStackModules(stack);
+    if (count <= 1) {
+        LogMemoryRegion("anim-hierarchy", hierarchy);
+        LogStackModules(stack);
+    }
 }
 
 extern "C" bool __stdcall Bridge_IsValidStaticAssociation(uintptr_t staticAssociation)
@@ -4060,6 +4312,89 @@ extern "C" bool __stdcall Bridge_IsValidStaticAssociation(uintptr_t staticAssoci
     return true;
 }
 
+void MarkNeutralizedAnimAssociation(uintptr_t association)
+{
+    if (!association) {
+        return;
+    }
+
+    for (size_t i = 0; i < kMaxNeutralizedAnimAssociations; ++i) {
+        if (g_neutralizedAnimAssociations[i] == association) {
+            return;
+        }
+    }
+
+    const LONG slot = InterlockedIncrement(&g_neutralizedAnimAssociationCursor);
+    g_neutralizedAnimAssociations[static_cast<size_t>(slot) % kMaxNeutralizedAnimAssociations] = association;
+}
+
+bool ConsumeNeutralizedAnimAssociation(uintptr_t association)
+{
+    if (!association) {
+        return false;
+    }
+
+    for (size_t i = 0; i < kMaxNeutralizedAnimAssociations; ++i) {
+        if (g_neutralizedAnimAssociations[i] == association) {
+            g_neutralizedAnimAssociations[i] = 0;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool IsNeutralizedAnimAssociation(uintptr_t association)
+{
+    if (!association) {
+        return false;
+    }
+
+    for (size_t i = 0; i < kMaxNeutralizedAnimAssociations; ++i) {
+        if (g_neutralizedAnimAssociations[i] == association) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool LooksLikeNeutralizedAnimAssociation(uintptr_t association)
+{
+    if (!IsReadableCommitted(association, 0x30)) {
+        return false;
+    }
+
+    uint16_t numBlendNodes = 0xFFFF;
+    uintptr_t blendNodes = 0;
+    float blendAmount = 1.0f;
+    float blendDelta = 1.0f;
+    float speed = 1.0f;
+    float timeStep = 1.0f;
+    uint16_t flags = 0xFFFF;
+    __try {
+        numBlendNodes = *reinterpret_cast<const uint16_t*>(association + 0x0C);
+        blendNodes = *reinterpret_cast<const uintptr_t*>(association + 0x10);
+        blendAmount = *reinterpret_cast<const float*>(association + 0x18);
+        blendDelta = *reinterpret_cast<const float*>(association + 0x1C);
+        speed = *reinterpret_cast<const float*>(association + 0x24);
+        timeStep = *reinterpret_cast<const float*>(association + 0x28);
+        flags = *reinterpret_cast<const uint16_t*>(association + 0x2E);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+
+    constexpr uint16_t kAnimationReferenceBlock = 0x4000;
+    return numBlendNodes == 0 &&
+        blendNodes == 0 &&
+        blendAmount == 0.0f &&
+        blendDelta == 0.0f &&
+        speed == 0.0f &&
+        timeStep == 0.0f &&
+        flags == kAnimationReferenceBlock;
+}
+
 extern "C" void __stdcall Bridge_RepairInvalidStaticAssociation(uintptr_t runtimeAssociation, uintptr_t staticAssociation)
 {
     static LONG logCount = 0;
@@ -4086,30 +4421,33 @@ extern "C" void __stdcall Bridge_RepairInvalidStaticAssociation(uintptr_t runtim
     }
 
     const uintptr_t fallbackHier = Bridge_IsValidAnimHierarchy(g_lastValidAnimHierarchy) ? g_lastValidAnimHierarchy : 0;
-    constexpr uint16_t kAnimationBlendAutoRemove = 0x0004;
+    constexpr uint16_t kAnimationReferenceBlock = 0x4000;
     constexpr float kZeroBlend = 0.0f;
-    constexpr float kFadeOutNow = -1.0f;
-    const uint16_t neutralizedFlags = fallbackHier ? kAnimationBlendAutoRemove : static_cast<uint16_t>(kAnimationBlendAutoRemove | 0x4000);
+    const uint16_t neutralizedFlags = kAnimationReferenceBlock;
 
-    if (IsReadableCommitted(runtimeAssociation, 0x30)) {
+    if (IsReadableCommitted(runtimeAssociation, 0x3C)) {
         __try {
             *reinterpret_cast<uint16_t*>(runtimeAssociation + 0x0C) = 0;                 // m_NumBlendNodes
             *reinterpret_cast<uint16_t*>(runtimeAssociation + 0x0E) = animGroupId;       // m_AnimGroupId
             *reinterpret_cast<uint32_t*>(runtimeAssociation + 0x10) = 0;                 // m_BlendNodes
             *reinterpret_cast<uint32_t*>(runtimeAssociation + 0x14) = static_cast<uint32_t>(fallbackHier);
             *reinterpret_cast<float*>(runtimeAssociation + 0x18) = kZeroBlend;           // m_BlendAmount
-            *reinterpret_cast<float*>(runtimeAssociation + 0x1C) = kFadeOutNow;          // m_BlendDelta
+            *reinterpret_cast<float*>(runtimeAssociation + 0x1C) = 0.0f;                 // m_BlendDelta
             *reinterpret_cast<float*>(runtimeAssociation + 0x20) = 0.0f;                 // m_CurrentTime
             *reinterpret_cast<float*>(runtimeAssociation + 0x24) = 0.0f;                 // m_Speed
             *reinterpret_cast<float*>(runtimeAssociation + 0x28) = 0.0f;                 // m_TimeStep
             *reinterpret_cast<uint16_t*>(runtimeAssociation + 0x2C) = animId;            // m_AnimId
             *reinterpret_cast<uint16_t*>(runtimeAssociation + 0x2E) = neutralizedFlags;  // m_Flags
+            *reinterpret_cast<uint32_t*>(runtimeAssociation + 0x30) = 0;                 // m_nCallbackType
+            *reinterpret_cast<uintptr_t*>(runtimeAssociation + 0x34) = 0;                // m_pCallbackFunc
+            *reinterpret_cast<uintptr_t*>(runtimeAssociation + 0x38) = 0;                // m_pCallbackData
         }
         __except (EXCEPTION_EXECUTE_HANDLER) {
         }
     }
+    MarkNeutralizedAnimAssociation(runtimeAssociation);
 
-    if (count <= 32) {
+    if (count <= 4) {
         Log("static assoc guard: neutralized invalid source=0x%08X runtime=0x%08X srcNodes=%u animId=%u group=%u flags=0x%04X neutralFlags=0x%04X seqs=0x%08X hier=0x%08X fallbackHier=0x%08X",
             staticAssociation,
             runtimeAssociation,
@@ -4121,14 +4459,74 @@ extern "C" void __stdcall Bridge_RepairInvalidStaticAssociation(uintptr_t runtim
             blendSeqs,
             blendHier,
             fallbackHier);
-        LogMemoryRegion("static-assoc-source", staticAssociation);
-        if (staticAssociation) {
-            LogDwords("static-assoc-source", staticAssociation, 5);
+        if (count <= 1) {
+            LogMemoryRegion("static-assoc-source", staticAssociation);
+            LogMemoryRegion("static-assoc-seqs", blendSeqs);
+            LogMemoryRegion("static-assoc-hier", blendHier);
+            LogMemoryRegion("static-assoc-fallback-hier", fallbackHier);
         }
-        LogMemoryRegion("static-assoc-seqs", blendSeqs);
-        LogMemoryRegion("static-assoc-hier", blendHier);
-        LogMemoryRegion("static-assoc-fallback-hier", fallbackHier);
     }
+}
+
+extern "C" bool __stdcall Bridge_PrepareAnimAssociationUpdate(uintptr_t association)
+{
+    static LONG logCount = 0;
+
+    const bool neutralized = IsNeutralizedAnimAssociation(association) || LooksLikeNeutralizedAnimAssociation(association);
+    if (!neutralized) {
+        return true;
+    }
+
+    if (!IsReadableCommitted(association, 0x3C)) {
+        const LONG count = InterlockedIncrement(&logCount);
+        if (count <= 8) {
+            Log("anim assoc guard: skipped unreadable neutralized association=0x%08X", association);
+            LogMemoryRegion("anim-assoc", association);
+        }
+        return false;
+    }
+
+    uint16_t numBlendNodes = 0;
+    uintptr_t blendNodes = 0;
+    uintptr_t blendHier = 0;
+    uint16_t flags = 0;
+    __try {
+        numBlendNodes = *reinterpret_cast<const uint16_t*>(association + 0x0C);
+        blendNodes = *reinterpret_cast<const uintptr_t*>(association + 0x10);
+        blendHier = *reinterpret_cast<const uintptr_t*>(association + 0x14);
+        flags = *reinterpret_cast<const uint16_t*>(association + 0x2E);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        const LONG count = InterlockedIncrement(&logCount);
+        if (count <= 8) {
+            Log("anim assoc guard: read exception while skipping neutralized association=0x%08X", association);
+        }
+        return false;
+    }
+
+    uintptr_t next = 0;
+    uintptr_t prev = 0;
+    __try {
+        next = *reinterpret_cast<const uintptr_t*>(association + 0x00);
+        prev = *reinterpret_cast<const uintptr_t*>(association + 0x04);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        next = 0;
+        prev = 0;
+    }
+
+    const LONG count = InterlockedIncrement(&logCount);
+    if (count <= 8) {
+        Log("anim assoc guard: skipped neutralized association assoc=0x%08X nodes=%u nodePtr=0x%08X hier=0x%08X flags=0x%04X next=0x%08X prev=0x%08X",
+            association,
+            numBlendNodes,
+            blendNodes,
+            blendHier,
+            flags,
+            next,
+            prev);
+    }
+    return false;
 }
 
 extern "C" bool __stdcall Bridge_PrepareAnimFrameUpdateData(uintptr_t updateData)
@@ -4139,7 +4537,7 @@ extern "C" bool __stdcall Bridge_PrepareAnimFrameUpdateData(uintptr_t updateData
     constexpr size_t kNodeSize = 0x18;
     if (!IsReadableCommitted(updateData, kUpdateDataSize)) {
         const LONG count = InterlockedIncrement(&logCount);
-        if (count <= 32) {
+        if (count <= 4) {
             Log("anim frame guard: skipped unreadable update data=0x%08X", updateData);
             LogMemoryRegion("anim-frame-update-data", updateData);
         }
@@ -4156,7 +4554,7 @@ extern "C" bool __stdcall Bridge_PrepareAnimFrameUpdateData(uintptr_t updateData
 
     if (!firstNodeArray) {
         const LONG count = InterlockedIncrement(&logCount);
-        if (count <= 32) {
+        if (count <= 4) {
             const uint32_t includePartial = *reinterpret_cast<const uint32_t*>(updateData);
             Log("anim frame guard: skipped empty BlendNodeArrays updateData=0x%08X includePartial=%u", updateData, includePartial);
         }
@@ -4210,7 +4608,7 @@ extern "C" bool __stdcall Bridge_PrepareAnimFrameUpdateData(uintptr_t updateData
         }
 
         const LONG count = InterlockedIncrement(&logCount);
-        if (count <= 32) {
+        if (count <= 4) {
             Log("anim frame guard: truncated invalid BlendNodeArrays updateData=0x%08X index=%d node=0x%08X seq=0x%08X assoc=0x%08X",
                 updateData,
                 i,
@@ -8704,6 +9102,66 @@ void InstallAnimStaticAssocInitGuard()
 #endif
 }
 
+void InstallAnimUpdateBlendGuard()
+{
+#if defined(_M_IX86)
+    constexpr uintptr_t patchAddress = 0x004D1490;
+    constexpr uintptr_t continueAddress = 0x004D1497;
+    static const uint8_t expectedBytes[] = {
+        0xD9, 0x44, 0x24, 0x04, // fld dword ptr [esp+4]
+        0x56,                   // push esi
+        0x8B, 0xF1              // mov esi, ecx
+    };
+
+    uint8_t current[sizeof(expectedBytes)]{};
+    if (!IsReadableCommitted(patchAddress, sizeof(current))) {
+        Log("anim assoc guard: patch address unreadable 0x%08X", patchAddress);
+        return;
+    }
+
+    __try {
+        std::memcpy(current, reinterpret_cast<const void*>(patchAddress), sizeof(current));
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        Log("anim assoc guard: read exception at 0x%08X", patchAddress);
+        return;
+    }
+
+    const uintptr_t currentTarget = DecodeRel32JumpTarget(patchAddress);
+    const uintptr_t guardTarget = reinterpret_cast<uintptr_t>(Bridge_AnimUpdateBlend_Guard);
+    if (currentTarget == guardTarget) {
+        Log("anim assoc guard: already installed at CAnimBlendAssociation::UpdateBlend");
+        return;
+    }
+
+    if (std::memcmp(current, expectedBytes, sizeof(expectedBytes)) != 0) {
+        Log("anim assoc guard: unexpected bytes at 0x%08X old=%02X %02X %02X %02X %02X %02X %02X currentTarget=0x%08X",
+            patchAddress,
+            current[0], current[1], current[2], current[3],
+            current[4], current[5], current[6],
+            currentTarget);
+        return;
+    }
+
+    g_animUpdateBlendContinue = continueAddress;
+    uint8_t patch[sizeof(expectedBytes)]{};
+    patch[0] = 0xE9;
+    const int32_t rel = static_cast<int32_t>(guardTarget - (patchAddress + 5));
+    std::memcpy(patch + 1, &rel, sizeof(rel));
+    for (size_t i = 5; i < sizeof(patch); ++i) {
+        patch[i] = 0x90;
+    }
+
+    if (WriteBytesWithProtect(patchAddress, patch, sizeof(patch))) {
+        Log("anim assoc guard: installed at CAnimBlendAssociation::UpdateBlend target=0x%08X continue=0x%08X",
+            guardTarget,
+            g_animUpdateBlendContinue);
+    }
+#else
+    Log("anim assoc guard: unsupported architecture");
+#endif
+}
+
 void InstallAnimFrameUpdateSkinnedVelocityGuard()
 {
 #if defined(_M_IX86)
@@ -8749,6 +9207,66 @@ void InstallAnimFrameUpdateSkinnedVelocityGuard()
         Log("anim frame guard: installed at FrameUpdateCallBackSkinnedWithVelocityExtraction target=0x%08X continue=0x%08X",
             guardTarget,
             g_animFrameUpdateSkinnedVelocityContinue);
+    }
+#else
+    Log("anim frame guard: unsupported architecture");
+#endif
+}
+
+void InstallAnimFrameUpdateSkinnedGuard()
+{
+#if defined(_M_IX86)
+    constexpr uintptr_t patchAddress = 0x004D2B90;
+    constexpr uintptr_t continueAddress = 0x004D2B98;
+    static const uint8_t expectedBytes[] = {
+        0x83, 0xEC, 0x3C,       // sub esp, 3Ch
+        0x55,                   // push ebp
+        0x8B, 0x6C, 0x24, 0x44  // mov ebp, [esp+44h]
+    };
+
+    uint8_t current[sizeof(expectedBytes)]{};
+    if (!IsReadableCommitted(patchAddress, sizeof(current))) {
+        Log("anim frame guard: skinned patch address unreadable 0x%08X", patchAddress);
+        return;
+    }
+
+    __try {
+        std::memcpy(current, reinterpret_cast<const void*>(patchAddress), sizeof(current));
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        Log("anim frame guard: skinned read exception at 0x%08X", patchAddress);
+        return;
+    }
+
+    const uintptr_t currentTarget = DecodeRel32JumpTarget(patchAddress);
+    const uintptr_t guardTarget = reinterpret_cast<uintptr_t>(Bridge_AnimFrameUpdateSkinned_Guard);
+    if (currentTarget == guardTarget) {
+        Log("anim frame guard: already installed at FrameUpdateCallBackSkinned");
+        return;
+    }
+
+    if (std::memcmp(current, expectedBytes, sizeof(expectedBytes)) != 0) {
+        Log("anim frame guard: skinned unexpected bytes at 0x%08X old=%02X %02X %02X %02X %02X %02X %02X %02X currentTarget=0x%08X",
+            patchAddress,
+            current[0], current[1], current[2], current[3],
+            current[4], current[5], current[6], current[7],
+            currentTarget);
+        return;
+    }
+
+    g_animFrameUpdateSkinnedContinue = continueAddress;
+    uint8_t patch[sizeof(expectedBytes)]{};
+    patch[0] = 0xE9;
+    const int32_t rel = static_cast<int32_t>(guardTarget - (patchAddress + 5));
+    std::memcpy(patch + 1, &rel, sizeof(rel));
+    for (size_t i = 5; i < sizeof(patch); ++i) {
+        patch[i] = 0x90;
+    }
+
+    if (WriteBytesWithProtect(patchAddress, patch, sizeof(patch))) {
+        Log("anim frame guard: installed at FrameUpdateCallBackSkinned target=0x%08X continue=0x%08X",
+            guardTarget,
+            g_animFrameUpdateSkinnedContinue);
     }
 #else
     Log("anim frame guard: unsupported architecture");
@@ -9903,8 +10421,13 @@ const char* KnownGameAddressName(uintptr_t eip)
         return "CTask::operator new / CPools::ms_pTaskPool";
     case 0x004D41C0:
         return "CAnimManager::UncompressAnimation";
+    case 0x004D1490:
+        return "CAnimBlendAssociation::UpdateBlend";
     case 0x004CEEC0:
         return "CAnimBlendAssociation::Init(static)";
+    case 0x004D2B90:
+    case 0x004D2C30:
+        return "FrameUpdateCallBackSkinned";
     case 0x004D1680:
     case 0x004D1710:
         return "FrameUpdateCallBackSkinnedWithVelocityExtraction";
@@ -10510,6 +11033,112 @@ LONG CALLBACK BridgeVectoredExceptionHandler(EXCEPTION_POINTERS* info)
     }
 #endif
 
+    if (g_config.enableAnimFrameUpdateGuard &&
+        info->ContextRecord &&
+        info->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION &&
+        info->ExceptionRecord->ExceptionAddress == reinterpret_cast<void*>(0x004D1710) &&
+        info->ExceptionRecord->NumberParameters > 1 &&
+        static_cast<uintptr_t>(info->ExceptionRecord->ExceptionInformation[1]) == 0x10 &&
+        info->ContextRecord->Eax == 0) {
+
+        CONTEXT* ctx = info->ContextRecord;
+        static LONG recoverCount = 0;
+        const LONG count = InterlockedIncrement(&recoverCount);
+        if (count <= 4) {
+            Log("anim frame VEH: skipped null blend node at 0x004D1710 esp=0x%08X edi=0x%08X esi=0x%08X ecx=0x%08X",
+                ctx->Esp,
+                ctx->Edi,
+                ctx->Esi,
+                ctx->Ecx);
+        }
+        ctx->Eip = 0x004D1A45;
+        return EXCEPTION_CONTINUE_EXECUTION;
+    }
+
+    const DWORD psCompatCode = info->ExceptionRecord->ExceptionCode;
+    if (g_config.enableProperShadersCompat &&
+        (psCompatCode == EXCEPTION_ACCESS_VIOLATION ||
+            psCompatCode == EXCEPTION_ILLEGAL_INSTRUCTION ||
+            psCompatCode == EXCEPTION_PRIV_INSTRUCTION)) {
+        const uintptr_t psEip = static_cast<uintptr_t>(info->ContextRecord->Eip);
+        const uintptr_t faultAddr = info->ExceptionRecord->NumberParameters > 1 ?
+            info->ExceptionRecord->ExceptionInformation[1] : 0;
+
+        bool isPsModule = false;
+        if (faultAddr == 0) {
+            char modName[MAX_PATH]{};
+            ModuleBaseFromAddress(psEip, modName, sizeof(modName));
+            isPsModule = (strstr(modName, "propershaders") != nullptr || strstr(modName, "ProperShaders") != nullptr);
+        }
+
+        bool isEipNonExec = false;
+        if (!isPsModule && psEip > 0x00900000) {
+            MEMORY_BASIC_INFORMATION eipMbi{};
+            if (VirtualQuery(reinterpret_cast<void*>(psEip), &eipMbi, sizeof(eipMbi))) {
+                isEipNonExec = (eipMbi.State == MEM_COMMIT) &&
+                    (eipMbi.Protect & (PAGE_READWRITE | PAGE_WRITECOPY)) &&
+                    !(eipMbi.Protect & (PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY));
+            }
+        }
+
+        if (psEip < 0x10000) {
+            static LONG s_lowAddressSkipCount = 0;
+            if (InterlockedIncrement(&s_lowAddressSkipCount) <= 6) {
+                Log("proper shaders compat: not recovering low-address exception eip=0x%08X fault=0x%08X code=0x%08X",
+                    psEip,
+                    faultAddr,
+                    psCompatCode);
+            }
+            return EXCEPTION_CONTINUE_SEARCH;
+        }
+
+        bool hasPsStackFrame = isPsModule;
+        if (!hasPsStackFrame && info->ContextRecord && IsReadableCommitted(info->ContextRecord->Esp, sizeof(uintptr_t))) {
+            for (int depth = 0; depth < 16; ++depth) {
+                uint32_t candidate = 0;
+                if (!SafeReadU32(info->ContextRecord->Esp + depth * 4, &candidate)) {
+                    break;
+                }
+                char mn[MAX_PATH]{};
+                ModuleBaseFromAddress(candidate, mn, sizeof(mn));
+                if (strstr(mn, "propershaders") != nullptr || strstr(mn, "ProperShaders") != nullptr) {
+                    hasPsStackFrame = true;
+                    break;
+                }
+            }
+        }
+
+        const bool isJumpToBadAddress = hasPsStackFrame &&
+            ((psEip == faultAddr) || (faultAddr == 0 && psEip > 0x60000000) || isPsModule || isEipNonExec);
+        if (isJumpToBadAddress) {
+            CONTEXT* psCtx = info->ContextRecord;
+
+            static LONG s_dumpCount = 0;
+            if (InterlockedIncrement(&s_dumpCount) <= 3) {
+                Log("ps watchpoint: unsafe bad jump left to CrashInfo eip=0x%08X fault=0x%08X code=0x%08X esp=0x%08X eax=0x%08X ecx=0x%08X edx=0x%08X esi=0x%08X edi=0x%08X",
+                    psEip,
+                    faultAddr,
+                    psCompatCode,
+                    psCtx->Esp,
+                    psCtx->Eax,
+                    psCtx->Ecx,
+                    psCtx->Edx,
+                    psCtx->Esi,
+                    psCtx->Edi);
+                for (int slot = 0; slot < 16; ++slot) {
+                    uintptr_t stackVal = 0;
+                    if (!SafeReadU32(psCtx->Esp + slot * 4, reinterpret_cast<uint32_t*>(&stackVal))) break;
+                    char modName[MAX_PATH]{};
+                    uintptr_t modBase = ModuleBaseFromAddress(stackVal, modName, sizeof(modName));
+                    if (modBase) {
+                        Log("ps watchpoint: stack[+0x%X]=0x%08X -> %s+0x%X",
+                            slot * 4, stackVal, modName, stackVal - modBase);
+                    }
+                }
+            }
+        }
+    }
+
     if (BreakRepeatedNonExecutableExceptionLoop(info)) {
         return EXCEPTION_CONTINUE_SEARCH;
     }
@@ -10574,11 +11203,432 @@ LONG CALLBACK BridgeVectoredExceptionHandler(EXCEPTION_POINTERS* info)
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
+void InstallProperShadersVtableGuard()
+{
+#if defined(_M_IX86)
+    // Hook conflict fix: always run if PS ASI is loaded (regardless of d3d9 proxy)
+    HMODULE psAsi = GetModuleHandleA("ProperShaders.asi");
+    if (!psAsi) {
+        Log("ps vtable guard: ProperShaders.asi not loaded, skipping");
+        return;
+    }
+    Log("ps vtable guard: ProperShaders.asi loaded at 0x%p", psAsi);
+
+    // Fix hook overlap at 0x731CC8 (FLA) vs 0x731CCB (PS)
+    {
+        uint8_t hookBytes[16]{};
+        if (IsReadableCommitted(0x731CC8, 16)) {
+            __try { std::memcpy(hookBytes, reinterpret_cast<void*>(0x731CC8), 16); } __except(EXCEPTION_EXECUTE_HANDLER) {}
+        }
+        Log("ps vtable guard: 0x731CC8 bytes: %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X",
+            hookBytes[0], hookBytes[1], hookBytes[2], hookBytes[3], hookBytes[4], hookBytes[5],
+            hookBytes[6], hookBytes[7], hookBytes[8], hookBytes[9], hookBytes[10], hookBytes[11],
+            hookBytes[12], hookBytes[13], hookBytes[14], hookBytes[15]);
+
+        // If FLA wrote JMP at 0x731CC8 and PS overwrote at 0x731CCB:
+        // FLA's E9 at [0] is intact but its offset at [1-4] got corrupted by PS's E9 at [3]
+        if (hookBytes[0] == 0xE9) {
+            int32_t currentOffset = *reinterpret_cast<int32_t*>(&hookBytes[1]);
+            uintptr_t currentTarget = 0x731CC8 + 5 + currentOffset;
+            Log("ps vtable guard: FLA JMP at 0x731CC8 -> target=0x%08X (offset=0x%08X)", currentTarget, currentOffset);
+
+            if (hookBytes[3] == 0xE9) {
+                Log("ps vtable guard: CONFLICT DETECTED - PS wrote E9 at 0x731CCB inside FLA's JMP offset!");
+                // PS's JMP offset is at hookBytes[4-7]
+                int32_t psOffset = *reinterpret_cast<int32_t*>(&hookBytes[4]);
+                uintptr_t psTarget = 0x731CCB + 5 + psOffset;
+                Log("ps vtable guard: PS JMP at 0x731CCB -> target=0x%08X", psTarget);
+
+                // Fix: scan FLA module for the thunk signature (03 C2 50 50 E8)
+                HMODULE fla = GetModuleHandleA("$fastman92limitAdjuster.asi");
+                if (fla) {
+                    uintptr_t flaBase = reinterpret_cast<uintptr_t>(fla);
+                    IMAGE_DOS_HEADER* dos = reinterpret_cast<IMAGE_DOS_HEADER*>(flaBase);
+                    IMAGE_NT_HEADERS* nt = reinterpret_cast<IMAGE_NT_HEADERS*>(flaBase + dos->e_lfanew);
+                    uintptr_t textStart = flaBase + nt->OptionalHeader.BaseOfCode;
+                    uintptr_t textEnd = textStart + nt->OptionalHeader.SizeOfCode;
+
+                    uintptr_t thunkAddr = 0;
+                    for (uintptr_t scan = textStart; scan < textEnd - 10; scan++) {
+                        uint8_t* p = reinterpret_cast<uint8_t*>(scan);
+                        // Signature: add eax,edx; push eax; push eax; call rel32
+                        if (p[0] == 0x03 && p[1] == 0xC2 && p[2] == 0x50 && p[3] == 0x50 && p[4] == 0xE8) {
+                            // Verify it ends with: add esp,4; pop eax; pop esi; retn
+                            int32_t callOff = *reinterpret_cast<int32_t*>(p + 5);
+                            if (p[9] == 0x83 && p[10] == 0xC4 && p[11] == 0x04 && p[12] == 0x58 && p[13] == 0x5E && p[14] == 0xC3) {
+                                thunkAddr = scan;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (thunkAddr) {
+                        Log("ps vtable guard: found FLA thunk at 0x%08X, restoring JMP", thunkAddr);
+                        int32_t correctOffset = static_cast<int32_t>(thunkAddr - (0x731CC8 + 5));
+                        uint8_t jmpPatch[5];
+                        jmpPatch[0] = 0xE9;
+                        std::memcpy(jmpPatch + 1, &correctOffset, 4);
+                        WriteBytesWithProtect(0x731CC8, jmpPatch, 5);
+                        Log("ps vtable guard: restored FLA JMP 0x731CC8 -> 0x%08X", thunkAddr);
+                    } else {
+                        Log("ps vtable guard: FLA thunk signature not found!");
+                    }
+                }
+            }
+        }
+    }
+
+    // Patch PS ASI: prevent NULL return from shader name lookup (0x50BB0)
+    // At PS+0x50C1F: cmovz eax, edx (returns NULL when lookup fails)
+    // NOP it so eax stays as valid pointer (ecx+0xC) instead of 0
+    {
+        uintptr_t psBase = reinterpret_cast<uintptr_t>(psAsi);
+        uintptr_t patchAddr = psBase + 0x50C1F;
+        uint8_t currentBytes[3]{};
+        if (IsReadableCommitted(patchAddr, 3)) {
+            __try { std::memcpy(currentBytes, reinterpret_cast<void*>(patchAddr), 3); } __except(EXCEPTION_EXECUTE_HANDLER) {}
+        }
+        if (currentBytes[0] == 0x0F && currentBytes[1] == 0x44 && currentBytes[2] == 0xC2) {
+            uint8_t nop3[] = { 0x0F, 0x1F, 0x00 }; // 3-byte NOP
+            if (WriteBytesWithProtect(patchAddr, nop3, 3)) {
+                Log("ps vtable guard: patched PS+0x50C1F cmovz->NOP (prevents NULL shader name return)");
+            }
+        } else {
+            Log("ps vtable guard: PS+0x50C1F bytes don't match cmovz (got %02X %02X %02X)",
+                currentBytes[0], currentBytes[1], currentBytes[2]);
+        }
+    }
+
+    constexpr uintptr_t kBadAddress = 0x615CD2C0;
+    constexpr uintptr_t kAllocBase = kBadAddress & 0xFFFF0000;  // 64KB aligned: 0x615C0000
+    constexpr size_t kAllocSize = (kBadAddress - kAllocBase) + 0x100;  // enough to cover target + stub
+    MEMORY_BASIC_INFORMATION mbi{};
+    if (VirtualQuery(reinterpret_cast<void*>(kBadAddress), &mbi, sizeof(mbi))) {
+        bool alreadyExec = (mbi.State == MEM_COMMIT) &&
+            (mbi.Protect & (PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY));
+        if (alreadyExec) {
+            Log("ps vtable guard: 0x%08X already executable, no stub needed", kBadAddress);
+            return;
+        }
+    }
+
+    void* stubMem = VirtualAlloc(reinterpret_cast<void*>(kAllocBase), kAllocSize,
+        MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+    if (!stubMem) {
+        Log("ps vtable guard: VirtualAlloc at 0x%08X size=0x%X failed (err=%u)",
+            kAllocBase, kAllocSize, GetLastError());
+        return;
+    }
+
+    uintptr_t stubBase = reinterpret_cast<uintptr_t>(stubMem);
+    if (kBadAddress >= stubBase && kBadAddress < stubBase + kAllocSize) {
+        uint8_t* stub = reinterpret_cast<uint8_t*>(kBadAddress);
+        stub[0] = 0x33; stub[1] = 0xC0;  // xor eax, eax
+        stub[2] = 0xC3;                    // ret
+        Log("ps vtable guard: installed safe stub at 0x%08X (xor eax,eax; ret) allocBase=0x%08X size=0x%X",
+            kBadAddress, stubBase, kAllocSize);
+    } else {
+        Log("ps vtable guard: alloc at 0x%p does not cover 0x%08X", stubMem, kBadAddress);
+    }
+#endif
+}
+
+void ApplyProperShadersCompat()
+{
+#if defined(_M_IX86)
+    uint32_t flaNewValue = 0;
+    if (!SafeReadU32(0x848B9D + 3, &flaNewValue) ||
+        flaNewValue == kOriginalCModelInfoPtrs ||
+        flaNewValue < 0x00400000 ||
+        flaNewValue > 0x80000000) {
+        Log("proper shaders compat: FLA CModelInfo relocation not detected (probed 0x%08X), skipping",
+            flaNewValue);
+        return;
+    }
+
+    constexpr uintptr_t kRenderRangeStart = 0x840000;
+    constexpr uintptr_t kRenderRangeEnd = 0x8C0000;
+
+    uint32_t restored = 0;
+    for (uintptr_t addr = kRenderRangeStart; addr + 4 <= kRenderRangeEnd; addr += 1) {
+        uint32_t val = 0;
+        if (!SafeReadU32(addr, &val)) {
+            break;
+        }
+        if (val == flaNewValue) {
+            if (WriteBytesWithProtect(addr, reinterpret_cast<const uint8_t*>(&kOriginalCModelInfoPtrs), sizeof(kOriginalCModelInfoPtrs))) {
+                ++restored;
+            }
+        }
+    }
+
+    Log("proper shaders compat: scanned 0x%08X-0x%08X, restored %u CModelInfo pointer patches (0x%08X -> 0x%08X)",
+        kRenderRangeStart, kRenderRangeEnd, restored, flaNewValue, kOriginalCModelInfoPtrs);
+#endif
+}
+
+void InstallRwTexDictionaryFindNamedTextureGuard()
+{
+#if defined(_M_IX86)
+    auto installPatch = [](uintptr_t patchAddress, const uint8_t* expectedBytes, size_t patchSize, uintptr_t bridgeTarget, const char* label) -> bool {
+        const uintptr_t currentTarget = DecodeRel32JumpTarget(patchAddress);
+        if (currentTarget == bridgeTarget) {
+            Log("rw texdict guard: %s already installed at 0x%08X", label, patchAddress);
+            return true;
+        }
+
+        if (!IsReadableCommitted(patchAddress, patchSize)) {
+            Log("rw texdict guard: %s patch address unreadable 0x%08X size=0x%X",
+                label, patchAddress, static_cast<unsigned>(patchSize));
+            return false;
+        }
+
+        uint8_t currentBytes[16]{};
+        if (patchSize > sizeof(currentBytes)) {
+            Log("rw texdict guard: %s patch size too large size=0x%X", label, static_cast<unsigned>(patchSize));
+            return false;
+        }
+
+        __try {
+            std::memcpy(currentBytes, reinterpret_cast<const void*>(patchAddress), patchSize);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) {
+            Log("rw texdict guard: %s read exception at 0x%08X", label, patchAddress);
+            return false;
+        }
+
+        if (std::memcmp(currentBytes, expectedBytes, patchSize) != 0) {
+            Log("rw texdict guard: %s bytes mismatch at 0x%08X got %02X %02X %02X %02X %02X %02X",
+                label, patchAddress,
+                currentBytes[0], currentBytes[1], currentBytes[2],
+                currentBytes[3], currentBytes[4], currentBytes[5]);
+            return false;
+        }
+
+        const int64_t rel64 = static_cast<int64_t>(bridgeTarget) - static_cast<int64_t>(patchAddress + 5);
+        if (rel64 < INT32_MIN || rel64 > INT32_MAX) {
+            Log("rw texdict guard: %s bridge out of rel32 range source=0x%08X target=0x%08X diff=%lld",
+                label, patchAddress, bridgeTarget, rel64);
+            return false;
+        }
+
+        uint8_t patch[16]{};
+        std::memset(patch, 0x90, patchSize);
+        patch[0] = 0xE9;
+        const int32_t rel32 = static_cast<int32_t>(rel64);
+        std::memcpy(patch + 1, &rel32, sizeof(rel32));
+
+        if (!WriteBytesWithProtect(patchAddress, patch, patchSize)) {
+            Log("rw texdict guard: %s patch write failed at 0x%08X", label, patchAddress);
+            return false;
+        }
+
+        Log("rw texdict guard: installed %s at 0x%08X -> 0x%08X size=%u",
+            label, patchAddress, bridgeTarget, static_cast<unsigned>(patchSize));
+        return true;
+    };
+
+    const uint8_t dictExpected[] = { 0x83, 0xC0, 0x08, 0x55, 0x56, 0x57, 0x8B, 0x18, 0x89, 0x44, 0x24, 0x14 };
+    const uint8_t nameExpected[] = { 0x8B, 0xF1, 0x8B, 0xFD, 0x8A, 0x0E };
+    const uint8_t linkExpected[] = { 0x8B, 0x1B, 0x8B, 0x44, 0x24, 0x14 };
+
+    installPatch(0x007F39F5, dictExpected, sizeof(dictExpected),
+        reinterpret_cast<uintptr_t>(Bridge_RwTexDictionaryFindNamedTexture_DictGuard), "dictionary pointer");
+    installPatch(0x007F3A13, nameExpected, sizeof(nameExpected),
+        reinterpret_cast<uintptr_t>(Bridge_RwTexDictionaryFindNamedTexture_NameGuard), "name pointer");
+    installPatch(0x007F3A52, linkExpected, sizeof(linkExpected),
+        reinterpret_cast<uintptr_t>(Bridge_RwTexDictionaryFindNamedTexture_LinkGuard), "list link");
+#else
+    Log("rw texdict guard: unsupported architecture");
+#endif
+}
+
+void InstallTxdLoadDictionaryWriteGuard()
+{
+#if defined(_M_IX86)
+    constexpr uintptr_t patchAddress = 0x00731E13;
+    static const uint8_t expectedBytes[] = {
+        0x89, 0x06,             // mov [esi], eax
+        0x74, 0x09,             // jz 0x731E20
+        0x53                    // push ebx
+    };
+
+    const uintptr_t guardTarget = reinterpret_cast<uintptr_t>(Bridge_TxdLoadDictionaryWriteGuard);
+    const uintptr_t currentTarget = DecodeRel32JumpTarget(patchAddress);
+    if (currentTarget == guardTarget) {
+        Log("txd load guard: already installed at 0x%08X", patchAddress);
+        return;
+    }
+
+    uint8_t current[sizeof(expectedBytes)]{};
+    if (!IsReadableCommitted(patchAddress, sizeof(current))) {
+        Log("txd load guard: patch address unreadable 0x%08X", patchAddress);
+        return;
+    }
+
+    __try {
+        std::memcpy(current, reinterpret_cast<const void*>(patchAddress), sizeof(current));
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        Log("txd load guard: read exception at 0x%08X", patchAddress);
+        return;
+    }
+
+    if (std::memcmp(current, expectedBytes, sizeof(expectedBytes)) != 0) {
+        Log("txd load guard: unexpected bytes at 0x%08X got %02X %02X %02X %02X %02X currentTarget=0x%08X",
+            patchAddress,
+            current[0],
+            current[1],
+            current[2],
+            current[3],
+            current[4],
+            currentTarget);
+        return;
+    }
+
+    if (WriteRel32Jump(patchAddress, guardTarget)) {
+        Log("txd load guard: installed at 0x%08X bridge=0x%08X",
+            patchAddress,
+            guardTarget);
+    }
+#else
+    Log("txd load guard: unsupported architecture");
+#endif
+}
+
+void InstallWidescreenFixSpriteNameGuard()
+{
+#if defined(_M_IX86)
+    HMODULE module = GetModuleHandleA("GTASA.WidescreenFix.asi");
+    if (!module) {
+        module = GetModuleHandleA("gtasa.widescreenfix.asi");
+    }
+    if (!module) {
+        Log("widescreenfix sprite guard: module not loaded, skipping");
+        return;
+    }
+
+    const uintptr_t base = reinterpret_cast<uintptr_t>(module);
+    const uintptr_t patchAddress = base + 0x1DB3E;
+    const uintptr_t bridgeTarget = reinterpret_cast<uintptr_t>(Bridge_WidescreenFixSpriteNameGuard);
+    g_widescreenFixSpriteNameGuardContinue = base + 0x1DB43;
+    g_widescreenFixSpriteNameGuardSkip = base + 0x1DD91;
+
+    const uintptr_t currentTarget = DecodeRel32JumpTarget(patchAddress);
+    if (currentTarget == bridgeTarget) {
+        Log("widescreenfix sprite guard: already installed base=0x%08X patch=0x%08X", base, patchAddress);
+        return;
+    }
+
+    const uint8_t expected[] = { 0x8B, 0x09, 0x83, 0xC1, 0x10 };
+    uint8_t current[sizeof(expected)]{};
+    if (!IsReadableCommitted(patchAddress, sizeof(current))) {
+        Log("widescreenfix sprite guard: patch address unreadable base=0x%08X patch=0x%08X", base, patchAddress);
+        return;
+    }
+
+    __try {
+        std::memcpy(current, reinterpret_cast<const void*>(patchAddress), sizeof(current));
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        Log("widescreenfix sprite guard: read exception base=0x%08X patch=0x%08X", base, patchAddress);
+        return;
+    }
+
+    if (std::memcmp(current, expected, sizeof(expected)) != 0) {
+        Log("widescreenfix sprite guard: bytes mismatch base=0x%08X patch=0x%08X got %02X %02X %02X %02X %02X",
+            base, patchAddress, current[0], current[1], current[2], current[3], current[4]);
+        return;
+    }
+
+    if (WriteRel32Jump(patchAddress, bridgeTarget)) {
+        Log("widescreenfix sprite guard: installed base=0x%08X patch=0x%08X bridge=0x%08X continue=0x%08X skip=0x%08X",
+            base, patchAddress, bridgeTarget, g_widescreenFixSpriteNameGuardContinue, g_widescreenFixSpriteNameGuardSkip);
+    }
+#else
+    Log("widescreenfix sprite guard: unsupported architecture");
+#endif
+}
+
+bool IsProperShadersAddTxdSlotConflictPresent()
+{
+#if defined(_M_IX86)
+    uint8_t hookBytes[8]{};
+    if (!IsReadableCommitted(0x731CC8, sizeof(hookBytes))) {
+        return false;
+    }
+
+    __try {
+        std::memcpy(hookBytes, reinterpret_cast<const void*>(0x731CC8), sizeof(hookBytes));
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+
+    if (hookBytes[0] != 0xE9) {
+        return false;
+    }
+
+    const int32_t currentOffset = *reinterpret_cast<const int32_t*>(&hookBytes[1]);
+    const uintptr_t currentTarget = 0x731CC8 + 5 + currentOffset;
+    return hookBytes[3] == 0xE9 || currentTarget == 0x615CD2C0;
+#else
+    return false;
+#endif
+}
+
+void InstallEarlyProperShadersCompatOnce(bool includeTextureGuards)
+{
+    if (!g_config.enableProperShadersCompat) {
+        return;
+    }
+
+    InstallProperShadersVtableGuard();
+    if (includeTextureGuards) {
+        InstallRwTexDictionaryFindNamedTextureGuard();
+        InstallTxdLoadDictionaryWriteGuard();
+    }
+}
+
+DWORD WINAPI EarlyProperShadersCompatThread(void*)
+{
+    bool installedTextureGuards = false;
+    bool touchedProperShadersOnce = false;
+
+    for (int attempt = 0; attempt < 400; ++attempt) {
+        const bool psLoaded =
+            GetModuleHandleA("ProperShaders.asi") != nullptr ||
+            GetModuleHandleA("propershaders.asi") != nullptr;
+        const bool conflict = IsProperShadersAddTxdSlotConflictPresent();
+
+        if (psLoaded && (!touchedProperShadersOnce || conflict)) {
+            InstallEarlyProperShadersCompatOnce(!installedTextureGuards);
+            touchedProperShadersOnce = true;
+            installedTextureGuards = true;
+        }
+
+        if (attempt == 399 && conflict) {
+            Log("early proper shaders compat: conflict still present after polling");
+        }
+
+        Sleep(25);
+    }
+
+    return 0;
+}
+
 DWORD WINAPI BridgeThread(void*)
 {
     Sleep(1500);
     LoadBridgeConfig();
-    Log("%s loaded (runtime/API name: FLACompatBridge)", kDisplayName);
+    InstallWidescreenFixSpriteNameGuard();
+    if (g_config.enableProperShadersCompat) {
+        InstallProperShadersVtableGuard();
+        InstallRwTexDictionaryFindNamedTextureGuard();
+        InstallTxdLoadDictionaryWriteGuard();
+    }
+    Log("%s v%s loaded (runtime/API name: FLACompatBridge, API=%u)",
+        kDisplayName, kProductVersion, kApiVersion);
     LogBridgeConfig();
     Log("loader: DINPUT8=%p DINPUT8Hooked=%p vorbisFile=%p vorbisHooked=%p",
         GetModuleHandleA("DINPUT8.dll"),
@@ -10600,6 +11650,9 @@ DWORD WINAPI BridgeThread(void*)
     LogFLAExports();
     RefreshFlaRuntimeState();
     RefreshRadarTraceRuntimeState();
+    if (g_config.enableProperShadersCompat) {
+        ApplyProperShadersCompat();
+    }
     if (g_config.enableFlaTrainInitHookRepair) {
         InstallFlaTrainInitHookRepair();
     }
@@ -10694,6 +11747,8 @@ DWORD WINAPI BridgeThread(void*)
         InstallAnimStaticAssocInitGuard();
     }
     if (g_config.enableAnimFrameUpdateGuard) {
+        InstallAnimUpdateBlendGuard();
+        InstallAnimFrameUpdateSkinnedGuard();
         InstallAnimFrameUpdateSkinnedVelocityGuard();
     }
     if (g_config.enableGetBoundCentreInlineGuard) {
@@ -10727,7 +11782,7 @@ DWORD WINAPI BridgeThread(void*)
 
 extern "C" __declspec(dllexport) uint32_t __stdcall FLACompatBridge_GetApiVersion()
 {
-    return 6;
+    return kApiVersion;
 }
 
 extern "C" __declspec(dllexport) uint32_t __stdcall FLACompatBridge_GetFileIdCapacity()
@@ -11047,6 +12102,12 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID)
         LoadBridgeConfig();
         if (g_config.enableVectoredExceptionHandler) {
             AddVectoredExceptionHandler(1, BridgeVectoredExceptionHandler);
+        }
+        if (g_config.enableProperShadersCompat) {
+            HANDLE earlyThread = CreateThread(nullptr, 0, EarlyProperShadersCompatThread, nullptr, 0, nullptr);
+            if (earlyThread) {
+                CloseHandle(earlyThread);
+            }
         }
         HANDLE thread = CreateThread(nullptr, 0, BridgeThread, nullptr, 0, nullptr);
         if (thread) {

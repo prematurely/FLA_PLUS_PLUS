@@ -2,8 +2,10 @@
 
 A compatibility and crash-mitigation bridge for **GTA San Andreas** when running under [fastman92's Limit Adjuster (FLA)](https://github.com/fastman92/fastman92_limit_adjuster) with heavily expanded pools, relocated tables, and high model IDs.
 
-> **Runtime filename:** `FLACompatBridge.asi`  
+> **Runtime filename:** `FLACompatBridge.asi`
 > **Config file:** `FLACompatBridge.ini`
+> **Current build:** `FLA++ v1.10c1` (`FLACompatBridge` API 6)
+> **Upstream public baseline:** `FLA++ v1.00`
 
 ---
 
@@ -23,10 +25,31 @@ When FLA expands the game beyond vanilla limits (e.g. 160,000+ file IDs, 100,000
 
 | Component | Version / Notes |
 |-----------|-----------------|
+| FLA++ | v1.10c1 (post-v1.00 compatibility release candidate; runtime/API name stays `FLACompatBridge`) |
 | Game | GTA SA 1.0 US HOODLUM (14,383,616 bytes) |
 | Limit Adjuster | FLA 7.6 & OLA  |
 | CLEO | CLEO 5.4 + CLEO+ (final) |
 | Tested mods | Urbanize, Proper Fixes, RoSA, Taxi77, SanPablo, MixSets |
+
+## Versioning
+
+FLA++ uses the `v1.00`, `v1.01`, `v1.10`, ... release line from the public
+FLA_PLUS_PLUS releases and does not reuse FLA's upstream version number.
+
+Recommended tags:
+
+- `v1.00` - current upstream public baseline
+- `v1.01` - bugfix-only patch release on top of v1.00
+- `v1.10aN` - alpha/internal test builds for the next compatibility feature release
+- `v1.10bN` - beta/community test builds
+- `v1.10cN` - release candidates
+- `v1.10` - stable compatibility release after the candidate build is validated
+
+Small numeric increments such as `v1.01` are crash fixes on top of `v1.00`.
+Compatibility feature releases such as `v1.10` may add guarded integrations for
+mods like ProperShaders or WidescreenFix without breaking the exported API.
+Larger lines such as `v2.00` are reserved for incompatible config/API or runtime
+behavior changes.
 
 ---
 
