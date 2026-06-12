@@ -1,192 +1,145 @@
 # FLA++ / FLACompatBridge
 
-A compatibility and crash-mitigation bridge for **GTA San Andreas** when running under [fastman92's Limit Adjuster (FLA)](https://github.com/fastman92/fastman92_limit_adjuster) with heavily expanded pools, relocated tables, and high model IDs.
+FLA++ is a compatibility bridge for **GTA San Andreas 1.0 US** running with
+fastman92 Limit Adjuster. The runtime file is still named
+`FLACompatBridge.asi` so existing loaders and external ASIs can keep using the
+same module/API name.
 
-> **Runtime filename:** `FLACompatBridge.asi`
-> **Config file:** `FLACompatBridge.ini`
-> **Current build:** `FLA++ v1.10c1` (`FLACompatBridge` API 6)
-> **Upstream public baseline:** `FLA++ v1.00`
+Current release candidate: `v1.10c1`
+Public baseline: `v1.00`
+API version: `6`
 
----
+## What It Does
 
-## What problem does this solve?
+- Protects legacy CLEO/ASI code from FLA-relocated game tables.
+- Guards pool, model, streaming, radar, animation, and TXD access paths that are
+  commonly hit by high-limit GTA SA installs.
+- Adds compatibility guards for ProperShaders, WidescreenFix, CLEO+, Urbanize,
+  Taxi77, SanPablo, MixSets, and similar legacy-risk modules.
+- Keeps modern loaders/fixes out of RuntimeRewrite through module policy
+  denylist rules.
 
-When FLA expands the game beyond vanilla limits (e.g. 160,000+ file IDs, 100,000+ buildings, relocated `CModelInfo`/`CStreaming` tables), legacy mods and CLEO scripts that hard-code original GTA SA 1.0 US memory addresses will crash or read garbage. FLA++ does **not** patch the game itself — it acts as a **regulatory compatibility layer** that:
+FLA++ is not a replacement for fastman92 Limit Adjuster. It runs beside FLA and
+patches compatibility problems caused by expanded limits, high IDs, relocated
+tables, and older plugins that still assume vanilla addresses.
 
-- Rewrites hard-coded vanilla addresses inside legacy mods at runtime
-- Guards early pool access with on-demand pool construction
-- Bridges opcode behavior for scripts that rely on fixed special-actor slots / radar traces
-- Classifies crashes to distinguish FLA issues from mod bugs
-- Protects modern plugins (SilentPatch, SkyGfx, etc.) from being touched
+## Install
 
----
+Download the release assets:
 
-## Target Environment
+- `FLACompatBridge.asi`
+- `FLACompatBridge.ini`
 
-| Component | Version / Notes |
-|-----------|-----------------|
-| FLA++ | v1.10c1 (post-v1.00 compatibility release candidate; runtime/API name stays `FLACompatBridge`) |
-| Game | GTA SA 1.0 US HOODLUM (14,383,616 bytes) |
-| Limit Adjuster | FLA 7.6 & OLA  |
-| CLEO | CLEO 5.4 + CLEO+ (final) |
-| Tested mods | Urbanize, Proper Fixes, RoSA, Taxi77, SanPablo, MixSets |
+Copy both files into:
 
-## Versioning
-
-FLA++ uses the `v1.00`, `v1.01`, `v1.10`, ... release line from the public
-FLA_PLUS_PLUS releases and does not reuse FLA's upstream version number.
-
-Recommended tags:
-
-- `v1.00` - current upstream public baseline
-- `v1.01` - bugfix-only patch release on top of v1.00
-- `v1.10aN` - alpha/internal test builds for the next compatibility feature release
-- `v1.10bN` - beta/community test builds
-- `v1.10cN` - release candidates
-- `v1.10` - stable compatibility release after the candidate build is validated
-
-Small numeric increments such as `v1.01` are crash fixes on top of `v1.00`.
-Compatibility feature releases such as `v1.10` may add guarded integrations for
-mods like ProperShaders or WidescreenFix without breaking the exported API.
-Larger lines such as `v2.00` are reserved for incompatible config/API or runtime
-behavior changes.
-
----
-
-## Architecture
-
-```
-FLA (expands limits, relocates tables)
-   │
-   ▼
-FLACompatBridge.asi  ──►  ModulePolicy (allowlist / denylist)
-   │                        │
-   ▼                        ▼
-┌─────────────────┐   ┌──────────────────┐
-│ Diagnostics     │   │ RuntimeRewrite   │
-│ - VEH + crash   │   │ - Scan legacy    │
-│   classification│   │   modules for    │
-│ - Module snap   │   │   old addresses  │
-│ - Risk const    │   │ - Patch to FLA   │
-│   scan          │   │   relocated addr │
-└─────────────────┘   └──────────────────┘
-   │
-   ▼
-┌─────────────────┐   ┌──────────────────┐
-│ LazyCPoolRegistry│   │ Mod Compat Layer │
-│ - On-demand pool │   │ - CLEO+ guards   │
-│   construction   │   │ - Urbanize preload│
-│ - Avoid full     │   │ - Taxi77 radar   │
-│   CPools::Init   │   │   / 03D3 fallback│
-└─────────────────┘   │ - SanPablo 0296  │
-                      │   special actor  │
-                      └──────────────────┘
+```text
+GTA San Andreas\scripts\
 ```
 
----
+Do not replace the ASI while `gta_sa.exe` is running.
 
-## Key Modules
+## Supported Setup
 
-| Module | Config Key | What it does |
-|--------|-----------|--------------|
-| **RuntimeRewrite** | `EnableRuntimeRewrite` | Scans allowed legacy modules (`.cleo`, `.asi`) for hard-coded vanilla addresses like `0xA9B0C8` (`CModelInfo`) and rewrites them to FLA's current relocated table. Supports rescan for late-loaded plugins. |
-| **LazyCPoolRegistry** | `EnableLazyCPoolRegistry` | When a legacy mod tries to allocate from a pool that isn't ready yet, constructs just that pool using FLA INI capacities instead of calling the dangerous full `CPools::Initialise`. |
-| **SpecialActorBridge** | `EnableSanPabloSpecialActorBridge` | Intercepts CLEO opcode `0296` (`unload_special_actor`) and provides encoded modes for high-ID special actor requests without fragile string parsing. |
-| **RadarTrace Bridge** | `EnableRadarBlipHandleGuard`, `EnableCleoTargetBlipCoordsBridge` | Redirects old CLEO scripts reading `CRadar::ms_RadarTrace` directly to FLA's expanded trace table; prevents taxi/GPS scripts from falling back to world `(0, 0)`. |
-| **CrashClassification** | `EnableCrashClassification` | VEH handler doesn't just log raw EIP — it categorizes: `MODEL_BOUND_CENTRE`, `RADAR_BLIP_HANDLE`, `PLACEABLE_MATRIX_LIFETIME`, `CLEO_PLUGIN`, `FLA_INTERNAL`, etc. |
-| **Taxi77 Guard** | `EnableTaxi77SetCarCoordinatesGuard`, `EnableTaxi77StateWatchdog` | Blocks `00AB` writes near `(0, 0)` and recovers with last known target-blip coords; watchdog detects stuck main thread and jumps back to `@START`. |
-| **CLEO+ Guards** | `EnableCleoDispatchGuard`, `EnableCleoThunk26720Guard` | Hardens CLEO+ dispatch paths against null objects and invalid jump targets when FLA expands object/ped/vehicle pools. |
+| Component | Notes |
+|---|---|
+| Game | GTA SA 1.0 US HOODLUM |
+| Limit adjuster | fastman92 Limit Adjuster 7.6 |
+| CLEO | CLEO 5.4 + CLEO+ |
+| Render/fix mods | ProperShaders, SkyGfx, WidescreenFix, SilentPatch |
+| Other tested mods | Urbanize, Proper Fixes, RoSA, Taxi77, SanPablo, MixSets |
 
----
+Open Limit Adjuster can be present for non-overlapping limits, but SA limits
+already owned by FLA should stay disabled there.
 
-## Build
+## v1.10c1 Highlights
 
-Requires **Visual Studio Build Tools 2022** (v145) or full VS2022.
+- ProperShaders compatibility for the FLA `AddTxdSlot` hook conflict.
+- ProperShaders shader-name null return guard.
+- CModelInfo render-range relocation repair for ProperShaders.
+- TXD and `RwTexDictionaryFindNamedTexture` pointer guards.
+- WidescreenFix sprite-name guard.
+- Extra animation association/frame update guards for stuck animation and crash
+  recovery.
+- RuntimeRewrite false-positive hardening for non-executable data sections.
+- PoolAllocateGuard pattern scanning and version-hash fallback.
+- `FLACompatBridge_IsModelLoaded` export for external modules.
 
-```powershell
-cmd /c 'call "C:
+## Config Notes
 
-Program Files (x86)
-
-Microsoft Visual Studio
-
-2022
-
-BuildTools
-
-VC
-
-Auxiliary
-
-Build
-
-vcvars32.bat" >nul && MSBuild "FLACompatBridge.vcxproj" /p:Configuration=Release /p:Platform=Win32 /m'
-```
-
-Output:
-```
-FLACompatBridge.asi
-FLACompatBridge.pdb
-```
-
-Deploy:
-```powershell
-Copy-Item FLACompatBridge.asi ..\..\scripts\FLACompatBridge.asi -Force
-```
-
-> Do **not** overwrite while `gta_sa.exe` is running.
-
----
-
-## Config Highlights
-
-See [`FLACompatBridge.ini`](FLACompatBridge.ini) for full options.
+The release INI is intentionally conservative. Important switches:
 
 ```ini
 [General]
 EnableBridge = 1
-EnableDiagnosticsGroup = 1
 EnableFLACompat = 1
 EnableModCompat = 1
 
 [ModulePolicy]
-; Denylist wins over allowlist
-ModernModuleDenylist = SilentPatch;WidescreenFix;WindowedMode;CrashInfo;modloader.asi;MixSets;FLACompatBridge;fastman92;ProperFixes;SkyGfx;VehFuncs
-
-[RuntimeRewrite]
-EnableRuntimeRewrite = 1
-EnableRuntimeRewriteRescan = 1
-RuntimeRewriteAllowlist = CLEO+.cleo;SA.Text.cleo;SA.GameEntities.cleo;SA.MemoryOperations.cleo;SA.Audio.cleo;std.;urbanize
-
-[FLA]
-EnableFlaTrainInitHookRepair = 1
-EnableLazyCPoolRegistry = 1
-EnablePickupModelLoadGuard = 1
+EnableModulePolicy = 1
+ModernModuleDenylist = SilentPatch;WidescreenFix;WindowedMode;CrashInfo;modloader.asi;MixSets;FLACompatBridge;fastman92;DINPUT8;vorbis;ProperFixes;SkyGfx;VehFuncs
+ForceNoRuntimeRewrite = ProperFixes;SkyGfx;ProperShaders;VehFuncs
+ForceNoAutoPoolGuard = ImprovedStreaming;ProperFixes;ProperShaders
+EnableProperShadersCompat = 1
 ```
 
----
+Only enable broad RuntimeRewrite rules for modules that need them. Modern fixes
+and render plugins should stay denied unless you are testing a specific crash.
+
+## Versioning
+
+- `v1.00`: first public baseline.
+- `v1.01`: bugfix-only patch line.
+- `v1.10`: compatibility feature line.
+- `v1.10cN`: release candidates for `v1.10`.
+- `v2.00`: reserved for breaking config/API/runtime behavior changes.
+
+FLA++ versions are separate from fastman92 Limit Adjuster versions.
+
+## Build
+
+Requires Visual Studio Build Tools with the Win32 MSVC toolchain.
+
+```powershell
+& "C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\MSBuild\Current\Bin\MSBuild.exe" `
+  .\FLACompatBridge.vcxproj `
+  /p:Configuration=Release `
+  /p:Platform=Win32 `
+  /m
+```
+
+Output:
+
+```text
+..\..\.codex-build\FLACompatBridge\FLACompatBridge.asi
+..\..\.codex-build\FLACompatBridge\FLACompatBridge.pdb
+```
 
 ## Exported API
 
-Other ASIs can query FLA++ at runtime via `GetProcAddress`:
+External ASIs can load `FLACompatBridge.asi` and query exports with
+`GetProcAddress`.
+
+Common exports:
 
 ```c
 uint32_t FLACompatBridge_GetApiVersion(void);
 uint32_t FLACompatBridge_GetFileIdCapacity(void);
-uintptr_t  FLACompatBridge_GetRelocatedAddress(uint32_t id);
-int        FLACompatBridge_GetPoolInfoByName(const char* name, uintptr_t* poolPtr, uint32_t* capacity);
-uint32_t   FLACompatBridge_RebuildSpecialActorCatalog(void);
-int        FLACompatBridge_RequestSpecialActorByCode(uint32_t modelId, uint32_t actorCode);
+uint32_t FLACompatBridge_GetCompatFlags(void);
+uint32_t FLACompatBridge_GetRuntimeSource(void);
+uintptr_t FLACompatBridge_GetRelocatedAddress(uint32_t id);
+uintptr_t FLACompatBridge_GetModelInfo(uint32_t modelId);
+uintptr_t FLACompatBridge_GetStreamingInfo(uint32_t modelId);
+int FLACompatBridge_GetPoolInfo(uint32_t poolId, uintptr_t* poolPtr, uint32_t* capacity);
+int FLACompatBridge_IsModelLoaded(uint32_t modelId);
 ```
 
-Header: [`FLACompatBridgeAPI.h`](FLACompatBridgeAPI.h)
+See `FLACompatBridgeAPI.h` for the full API.
 
----
-
-## File Overview
+## Files
 
 | File | Purpose |
-|------|---------|
-| `FLACompatBridge.cpp` | Single-file implementation (~400KB, ~10,600 lines). Contains VEH, RuntimeRewrite, LazyCPool, SpecialActorBridge, crash classification, mod guards, and all export APIs. |
-| `FLACompatBridgeAPI.h` | C export declarations for external ASIs. |
-| `FLACompatBridge.vcxproj` | VS2022 project: Win32, `/MT`, C++17, outputs `.asi`. |
+|---|---|
+| `FLACompatBridge.cpp` | Runtime implementation. |
+| `FLACompatBridgeAPI.h` | Public C export declarations. |
+| `FLACompatBridge.vcxproj` | Win32 ASI build project. |
+| `CHANGELOG.md` | Release notes and compatibility changes. |
