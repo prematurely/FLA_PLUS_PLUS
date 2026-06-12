@@ -1,0 +1,55 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Win32 ASI
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build
+        shell: pwsh
+        run: |
+          msbuild .\FLACompatBridge.vcxproj `
+            /m `
+            /p:Configuration=Release `
+            /p:Platform=Win32 `
+            /p:PlatformToolset=v143 `
+            /p:OutDir="${{ github.workspace }}\build\"
+
+      - name: Stage artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item .\build\FLACompatBridge.asi .\dist\FLACompatBridge.asi
+          Copy-Item .\build\FLACompatBridge.pdb .\dist\FLACompatBridge.pdb
+          if (Test-Path .\FLACompatBridge.ini) {
+            Copy-Item .\FLACompatBridge.ini .\dist\FLACompatBridge.ini
+          }
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: FLACompatBridge-${{ github.sha }}
+          path: |
+            dist/FLACompatBridge.asi
+            dist/FLACompatBridge.pdb
+            dist/FLACompatBridge.ini
+          if-no-files-found: ignore
