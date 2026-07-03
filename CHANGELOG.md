@@ -1,6 +1,69 @@
 FLA++ (FLACompatBridge) Changelog
 ==================================
 
+v1.10c2 - 2026-07-03
+--------------------
+- Second release candidate for the v1.10 compatibility feature line.
+
+[Open Limit Adjuster Coexistence Guard]
+- New subsystem: GuardOpenLimitAdjusterModuleLoad, GuardOpenLimitAdjusterSaLimits,
+  AuditOpenLimitAdjusterSaOverlaps, RepairOpenLimitAdjusterSaPoolHooks.
+- Detects whether an SA-limit pool hook belongs to FLA or OLA, restores FLA's
+  patch if OLA has overwritten it, and audits overlapping ownership instead of
+  requiring OLA to be disabled outright.
+- EnableOpenLimitAdjusterSaLimitGuard defaults on; EnableOpenLimitAdjusterModuleGuard
+  and EnableOpenLimitAdjusterOverlapAudit default off.
+
+[VehFuncs Pool Allocate Guard]
+- Extended the existing targeted PoolAllocateGuard pattern-scanning
+  (previously CLEO+/MixSets/Urbanize only) to VehFuncs.
+- This is narrower than RuntimeRewrite: VehFuncs stays denied for
+  RuntimeRewrite and AutoPoolGuard, only the specific AllocateBlocks guard
+  is opted in.
+
+[Animation & RenderWare Crash Guards]
+- New guards: AnimBlendGroup, RpAnimBlendClumpInit, RwClumpForAllAtomics,
+  and CRenderer::ShouldModelBeStreamed collision-model validation
+  (Bridge_LogInvalidShouldModelBeStreamedColModel).
+- All four enabled by default; target null/corrupt clump and collision-model
+  access from partially streamed or loaded entities.
+
+[Streaming Busy Threshold & Population Update Budget Patches]
+- InstallStreamingBusyThresholdPatch and InstallPopulationUpdateBudgetPatch,
+  tunable via StreamingBusyThreshold and PopulationBudgetMs.
+- Detects an existing hook at the population budget patch address first and
+  skips patching to avoid breaking an existing hook chain.
+
+[Ped Streaming Zone Repair + Gang-Only Population Guard]
+- New watchdog threads (PedStreamingZoneRepairThread, GangOnlyPopulationGuardThread)
+  for zone-based streaming and ped population edge cases.
+
+[Batch Lazy CPool Initialise]
+- AreCorePoolsReadyForDeferredReplay and EnsureBatchLazyCPoolsInitialised add a
+  batch-ready check ahead of deferred PoolAllocateGuard replay.
+- EnableBatchLazyCPoolInitialise defaults off; this stays opt-in pending
+  further testing, consistent with the project's stability doctrine of not
+  defaulting to broad automatic recovery paths.
+
+[ProperShaders CStreaming Image Rewrite]
+- ApplyProperShadersCompat now also scans the ProperShaders module image
+  itself for embedded CStreaming::ms_aInfoForModel references and rewrites
+  them to the FLA-relocated address, in addition to the existing CModelInfo
+  render-range table repair.
+- Added runtime/probe source fallback logging so the value source
+  (FLA runtime state vs. instruction-operand probe) is auditable.
+
+[FLA Path Node Diagnostics]
+- Optional scan of loose path node (.dat) files (EnableFlaPathNodeDiagnostics,
+  default off) for diagnosing node ID conflicts.
+
+[Modloader INI Parsing Helpers]
+- Internal .ini section/key parsing helpers (ExtractIniSectionName,
+  ExtractIniKeyName, ExtractModloaderIgnoreEntry) shared by the OLA guard
+  and other modloader-aware audits.
+
+- No API or export changes; API version remains 6.
+
 v1.10c1 - 2026-06-12
 --------------------
 - Post-v1.00 compatibility release candidate for FLA++.

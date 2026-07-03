@@ -5,7 +5,7 @@ fastman92 Limit Adjuster. The runtime file is still named
 `FLACompatBridge.asi` so existing loaders and external ASIs can keep using the
 same module/API name.
 
-Current release candidate: `v1.10c1`
+Current release candidate: `v1.10c2`
 Public baseline: `v1.00`
 API version: `6`
 
@@ -50,6 +50,27 @@ Do not replace the ASI while `gta_sa.exe` is running.
 
 Open Limit Adjuster can be present for non-overlapping limits, but SA limits
 already owned by FLA should stay disabled there.
+
+## v1.10c2 Highlights
+
+- Open Limit Adjuster coexistence guard: detects, audits, and repairs SA-limit
+  pool hooks if FLA and OLA overlap, without requiring OLA to be disabled.
+- Targeted PoolAllocateGuard coverage extended to VehFuncs.
+- New animation/RenderWare crash guards: AnimBlendGroup,
+  RpAnimBlendClumpInit, RwClumpForAllAtomics, and
+  `CRenderer::ShouldModelBeStreamed` collision-model validation.
+- Streaming busy threshold and population update budget patches to reduce
+  population/streaming stutter.
+- Ped streaming zone repair and gang-only population guard watchdogs.
+- Batch-ready check for LazyCPoolRegistry (`AreCorePoolsReadyForDeferredReplay`)
+  ahead of deferred PoolAllocateGuard replay.
+- ProperShaders compatibility extended to rewrite `CStreaming::ms_aInfoForModel`
+  references embedded inside the ProperShaders module image itself, with
+  runtime/probe source fallback logging.
+- Optional loose path node (`.dat`) diagnostics scan.
+- Internal modloader `.ini` parsing helpers shared by the OLA guard and other
+  audits.
+- No API or export changes; ABI stays at version 6.
 
 ## v1.10c1 Highlights
 
