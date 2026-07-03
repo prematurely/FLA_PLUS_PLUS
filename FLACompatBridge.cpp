@@ -51,7 +51,10 @@ struct BridgeConfig {
 
     bool enableVectoredExceptionHandler = true;
     bool enableExceptionDiagnostics = true;
+    bool enableStackScanDiagnostics = false;
+    bool enableMemoryRegionDiagnostics = false;
     bool enableBoundCentreVehRecovery = true;
+    bool enablePtrNodeExhaustionGuard = true;
     bool enableExceptionLoopBreaker = true;
     bool exceptionLoopBreakerTerminate = true;
     int maxExceptionLogs = 16;
@@ -61,9 +64,33 @@ struct BridgeConfig {
     bool enableRiskConstantScan = true;
     bool enableRelocatedAddressDiagnostics = true;
     bool enablePoolPointerDiagnostics = true;
+    bool enablePopulationPoolDiagnostics = false;
+    int populationPoolDiagStartDelayMs = 15000;
+    int populationPoolDiagIntervalMs = 5000;
+    int populationPoolDiagIterations = 24;
+    bool enableGangOnlyPopulationGuard = true;
+    int gangOnlyPopulationGuardStartDelayMs = 15000;
+    int gangOnlyPopulationGuardIntervalMs = 2000;
+    int gangOnlyPopulationGuardIterations = 180;
+    bool gangOnlyPopulationGuardClearCheatFlag = true;
+    bool enablePedStreamingZoneRepair = true;
+    bool pedStreamingZoneRepairCallOriginal = true;
+    int pedStreamingZoneRepairStartDelayMs = 20000;
+    int pedStreamingZoneRepairIntervalMs = 2000;
+    int pedStreamingZoneRepairIterations = 180;
+    int pedStreamingZoneRepairMaxCalls = 12;
+    int pedStreamingZoneRepairMaxLogs = 64;
+    bool enableStreamingBusyThresholdPatch = true;
+    int streamingBusyThreshold = 128;
+    bool enablePopulationUpdateBudgetPatch = true;
+    int populationUpdateBudgetMs = 33;
     bool enableCrashClassification = true;
     bool enableRuntimeRewriteAudit = true;
     bool enableOpenLimitAdjusterOverlapAudit = true;
+    bool enableFlaPathNodeDiagnostics = true;
+    bool enableOpenLimitAdjusterSaLimitGuard = true;
+    bool enableOpenLimitAdjusterModuleGuard = false;
+    char openLimitAdjusterSaLimitAllowlist[512]{};
     bool enableModulePolicy = true;
     char legacyModuleAllowlist[512]{};
     char modernModuleDenylist[512]{};
@@ -91,11 +118,13 @@ struct BridgeConfig {
     bool enableCObjectCreateBridge = true;
     bool enableCleoObjectCreateInlineRestore = true;
     bool enableCleoDispatchGuard = true;
+    bool enableCleoDispatchLazyPoolRecovery = false;
     bool enableCleoThunk26720Guard = true;
     bool enableCleoPlusExtendedObjectVarGuard = false;
     bool enableCleoPlusPoolAllocateGuard = true;
     bool enableMixSetsPoolAllocateGuard = true;
     bool enableUrbanizePoolAllocateGuard = true;
+    bool enableVehFuncsPoolAllocateGuard = true;
     bool enableAutoPoolAllocateGuard = true;
     bool enableDeferredPoolAllocateReplay = true;
     int autoPoolAllocateGuardMaxPatches = 256;
@@ -106,6 +135,9 @@ struct BridgeConfig {
     bool enableAnimUncompressGuard = true;
     bool enableAnimStaticAssocGuard = true;
     bool enableAnimFrameUpdateGuard = true;
+    bool enableRpAnimBlendClumpInitGuard = true;
+    bool enableRwClumpForAllAtomicsGuard = true;
+    bool enableShouldModelBeStreamedGuard = true;
     bool enableGetBoundCentreInlineGuard = true;
     bool enableGetBoundRectColModelGuard = true;
     bool enablePlaceableRemoveMatrixGuard = true;
@@ -134,6 +166,9 @@ struct BridgeConfig {
     bool enableColAccelStartCachePoolGuard = true;
     bool enableColModelPoolNewGuard = true;
     bool enableLazyCPoolRegistry = true;
+    bool enableBatchLazyCPoolInitialise = false;
+    bool enableReplayPoolReadSkipGuard = false;
+    bool enableEarlyCPoolsInitialiseRecovery = true;
     bool enableCPoolsInitialiseRecovery = false;
     bool enableRadarBlipHandleGuard = true;
     bool enableCleoTargetBlipCoordsBridge = true;
@@ -268,6 +303,12 @@ LONG g_colModelPoolNewGuardLogs = 0;
 LONG g_cPoolsInitialiseRecoveryLogs = 0;
 LONG g_cPoolsInitialiseRecoveryState = 0;
 LONG g_cPoolsInitialiseDispatchState = 0;
+LONG g_batchLazyCPoolInitialiseLogs = 0;
+LONG g_batchLazyCPoolInitialiseState = 0;
+LONG g_lazyCPoolBatchDepth = 0;
+LONG g_ptrNodeExhaustionGuardLogs = 0;
+LONG g_rwClumpForAllAtomicsGuardLogs = 0;
+LONG g_rpAnimBlendClumpInitGuardLogs = 0;
 
 using FlaAreDifficultIDsExtendedFn = bool(__cdecl*)();
 using FlaGetNumberOfFileIDsFn = int32_t(__cdecl*)();
@@ -295,11 +336,17 @@ uintptr_t g_cleoPlusVehicleAllocateBlocksContinue = 0;
 uintptr_t g_cleoPlusPedAllocateBlocksContinue = 0;
 uintptr_t g_mixSetsPedAllocateBlocksContinue = 0;
 uintptr_t g_urbanizePedAllocateBlocksContinue = 0;
+uintptr_t g_vehFuncsVehicleAllocateBlocksContinue = 0;
 uintptr_t g_animUncompressContinue = 0;
 uintptr_t g_animStaticAssocInitContinue = 0;
 uintptr_t g_animUpdateBlendContinue = 0;
 uintptr_t g_animFrameUpdateSkinnedContinue = 0;
 uintptr_t g_animFrameUpdateSkinnedVelocityContinue = 0;
+uintptr_t g_animBlendGroupContinue = 0;
+uintptr_t g_rwClumpForAllAtomicsContinue = 0;
+uintptr_t g_rpAnimBlendClumpInitContinue = 0;
+uintptr_t g_shouldModelBeStreamedContinue = 0;
+uintptr_t g_shouldModelBeStreamedReturnFalse = 0;
 uintptr_t g_flaTrainTypeCarriagesLoaderThis = 0;
 uintptr_t g_flaTrainTypeCarriagesLoadFunc = 0;
 uintptr_t g_widescreenFixSpriteNameGuardContinue = 0;
@@ -473,10 +520,33 @@ constexpr uintptr_t kFlaNoCollisionErrorPatch = 0x00534134;
 constexpr uintptr_t kFlaObjectInitCollisionPatch = 0x0059F8BE;
 constexpr uintptr_t kCColAccelStartCachePoolRead = 0x005B31A5;
 constexpr uintptr_t kCBuildingPoolNewEntry = 0x00403FA0;
+constexpr uintptr_t kCDummyPoolNewEntry = 0x00532630;
+constexpr uintptr_t kCIplStoreRemoveIplObjectPoolRead = 0x00404BB4;
+constexpr uintptr_t kCReplayMarkEverythingAsNewPedPoolRead = 0x0045D436;
+constexpr uintptr_t kCReplayMarkEverythingAsNewVehiclePoolRead = 0x0045D474;
+constexpr uintptr_t kCEntryInfoNodePoolNewEntry = 0x00536D10;
 constexpr uintptr_t kCColModelPoolNewEntry = 0x0040FB80;
+constexpr uintptr_t kCEventPoolNewEntry = 0x004B5570;
+constexpr uintptr_t kCPointRoutePoolNewEntry = 0x0041B5B0;
+constexpr uintptr_t kCNodeRoutePoolNewEntry = 0x0041B710;
+constexpr uintptr_t kCTaskAllocatorPoolNewEntry = 0x0069D8E0;
+constexpr uintptr_t kCPedAttractorPoolNewEntry = 0x005EA9F0;
 constexpr uintptr_t kCPedIntelligencePoolNewEntry = 0x00605EC0;
 constexpr uintptr_t kGenericPoolNewEntry = 0x0061A500;
 constexpr uintptr_t kCPoolsInitialise = 0x00550F10;
+constexpr uintptr_t kCPtrNodeSingleLinkPoolNewEntry = 0x00552240;
+constexpr uintptr_t kCPtrNodeDoubleLinkPoolNewEntry = 0x005522E0;
+constexpr uintptr_t kCPtrListSingleAddItemNullWrite = 0x00533606;
+constexpr uintptr_t kCPtrListDoubleAddItemNullWrite = 0x0053368B;
+constexpr uintptr_t kCQuadTreeNodeAddItemNullWrite = 0x00552D06;
+constexpr uintptr_t kRpClumpForAllAtomics = 0x00749B70;
+constexpr uintptr_t kRpClumpForAllAtomicsNullClumpRead = 0x00749B7B;
+constexpr uintptr_t kRpAnimBlendAllocateData = 0x004D5F50;
+constexpr uintptr_t kRpAnimBlendAllocateDataWrite = 0x004D5F6F;
+constexpr uintptr_t kRpAnimBlendClumpFillFrameArray = 0x004D64A0;
+constexpr uintptr_t kRpAnimBlendClumpFillFrameArrayRead = 0x004D64AB;
+constexpr uintptr_t kRpAnimBlendClumpInit = 0x004D6720;
+constexpr uintptr_t kRwClumpAnimPluginOffset = 0x00B5F878;
 constexpr uintptr_t kDefaultMatrixLinkList = 0x00B74288;
 constexpr size_t kMatrixListHeadOffset = 0x00;
 constexpr size_t kMatrixListTailOffset = 0x54;
@@ -498,6 +568,83 @@ constexpr uintptr_t kCleoObjectCreateInlinePatch = 0x0059FB1E;
 constexpr uintptr_t kOriginalRadarTrace = 0x00BA86F0;
 constexpr uintptr_t kCRadarGetActualBlipArrayIndex = 0x00582870;
 constexpr uintptr_t kFrontEndTargetBlipIndex = 0x00BA6774;
+constexpr size_t kPedPoolSlotSize = 0x7C4; // CPools::ms_pPedPool stores CPool<CPed, CCopPed>.
+constexpr uintptr_t kCWorldPlayers = 0x00B7CD98;
+constexpr uintptr_t kCGameCurrentArea = 0x00B72914;
+constexpr size_t kCPlayerInfoSize = 0x190;
+constexpr size_t kCPlayerInfoPedOffset = 0x00;
+constexpr size_t kCPlaceablePlacementPosOffset = 0x04;
+constexpr size_t kCPlaceableMatrixOffset = 0x14;
+constexpr size_t kCMatrixPositionOffset = 0x30;
+constexpr size_t kCEntityRwObjectOffset = 0x18;
+constexpr size_t kCEntityFlagsOffset = 0x1C;
+constexpr size_t kCEntityScanCodeOffset = 0x2C;
+constexpr size_t kCEntityAreaCodeOffset = 0x2F;
+constexpr size_t kCEntityInfoOffset = 0x36;
+constexpr size_t kCPhysicalFlagsOffset = 0x40;
+constexpr size_t kCPhysicalCollisionListOffset = 0xB0;
+constexpr size_t kCPhysicalMovingListOffset = 0xB4;
+constexpr size_t kCPedFlagsOffset = 0x46C;
+constexpr size_t kCPedCreatedByOffset = 0x484;
+constexpr size_t kCPedStateOffset = 0x534;
+constexpr size_t kCPedMoveStateOffset = 0x538;
+constexpr size_t kCPedHealthOffset = 0x540;
+constexpr size_t kCPedTypeOffset = 0x598;
+constexpr uintptr_t kPopulationDontCreateRandomGangMembers = 0x00C0FCB2;
+constexpr uintptr_t kPopulationOnlyCreateRandomGangMembers = 0x00C0FCB3;
+constexpr uintptr_t kPopulationDontCreateRandomCops = 0x00C0FCB4;
+constexpr uintptr_t kPopulationPedDensityMultiplier = 0x008D2530;
+constexpr uintptr_t kPopulationMaxNumberOfPedsInUse = 0x008D2538;
+constexpr uintptr_t kPopulationTotalMissionPeds = 0x00C0EC24;
+constexpr uintptr_t kPopulationTotalPeds = 0x00C0EC28;
+constexpr uintptr_t kPopulationTotalGangPeds = 0x00C0EC2C;
+constexpr uintptr_t kPopulationTotalCivPeds = 0x00C0EC30;
+constexpr uintptr_t kPopulationNumDealers = 0x00C0EC38;
+constexpr uintptr_t kPopulationNumCops = 0x00C0EC68;
+constexpr uintptr_t kPopulationNumCivFemale = 0x00C0EC6C;
+constexpr uintptr_t kPopulationNumCivMale = 0x00C0EC70;
+constexpr uintptr_t kPopulationCurrentWorldZone = 0x00C0FCBC;
+constexpr uintptr_t kStreamingLoadedGangs = 0x008E4BAC;
+constexpr uintptr_t kStreamingNumPriorityRequests = 0x008E4BA0;
+constexpr uintptr_t kStreamingNumPedsLoaded = 0x008E4BB0;
+constexpr uintptr_t kStreamingPedsLoaded = 0x008E4C00;
+constexpr uintptr_t kStreamingCurrentZoneType = 0x008E4C20;
+constexpr uintptr_t kStreamingNumModelsRequested = 0x008E4CB8;
+constexpr uintptr_t kStreamingDisableStreaming = 0x009654B0;
+constexpr uintptr_t kStreamingLoadingBigModel = 0x008E4A58;
+constexpr uintptr_t kRendererLoadingPriority = 0x00B76850;
+constexpr uintptr_t kCStreamingStreamZoneModels = 0x0040A560;
+constexpr uintptr_t kCStreamingStreamZoneModelsGangs = 0x0040AA10;
+constexpr uintptr_t kCStreamingStreamVehiclesAndPedsAlways = 0x0040B650;
+constexpr uintptr_t kCStreamingStreamVehiclesAndPeds = 0x0040B700;
+constexpr uintptr_t kCStreamingUpdate = 0x0040E670;
+constexpr uintptr_t kCStreamingIsVeryBusy = 0x004076A0;
+constexpr uintptr_t kCGamePopulationUpdateBudgetCmp = 0x0053C00F;
+constexpr uintptr_t kCGamePopulationUpdateBudgetImmediate = 0x0053C011;
+constexpr uintptr_t kCCutsceneMgrCutsceneProcessing = 0x00B5F852;
+constexpr uintptr_t kCReplayMode = 0x00A43088;
+constexpr uintptr_t kPopCycleNumOtherPeds = 0x00C0BC40;
+constexpr uintptr_t kPopCycleNumCopsPeds = 0x00C0BC44;
+constexpr uintptr_t kPopCycleNumGangsPeds = 0x00C0BC48;
+constexpr uintptr_t kPopCyclePercOther = 0x00C0BC4C;
+constexpr uintptr_t kPopCyclePercCops = 0x00C0BC50;
+constexpr uintptr_t kPopCyclePercGangs = 0x00C0BC54;
+constexpr uintptr_t kPopCycleCurrentZoneInfo = 0x00C0BC68;
+constexpr uintptr_t kPopCycleCurrentZoneType = 0x00C0BC6C;
+constexpr uintptr_t kPopCycleCurrentTimeOfWeek = 0x00C0BC70;
+constexpr uintptr_t kPopCycleCurrentTimeIndex = 0x00C0BC74;
+constexpr uintptr_t kPopCyclePercTypeGroup = 0x00C0BC78;
+constexpr uintptr_t kPopCycleNumDealersPeds = 0x00C0E978;
+constexpr uintptr_t kCheatsActive = 0x00969130;
+constexpr size_t kCheatElvisIsEverywhere = 39;
+constexpr size_t kCheatPedsAttackWithRockets = 40;
+constexpr size_t kCheatBeachParty = 41;
+constexpr size_t kCheatGangMembersEverywhere = 42;
+constexpr size_t kCheatGangsControlStreets = 43;
+constexpr size_t kCheatNinjaTheme = 44;
+constexpr size_t kCheatSlutMagnet = 45;
+constexpr size_t kCheatFunhouseTheme = 74;
+constexpr size_t kCheatCountryTraffic = 79;
 constexpr uintptr_t kScriptCommandHandlerTable = 0x008A6168;
 constexpr uintptr_t kProcessCommands600To699 = 0x0047F370;
 constexpr uintptr_t kProcessCommands900To999 = 0x00483BD0;
@@ -543,30 +690,41 @@ constexpr uint32_t kLegacyCleoRadarTraceShadowSlot = kOriginalRadarTraceCount - 
 void LogMemoryRegion(const char* label, uintptr_t address);
 void LoadBridgeConfig();
 void LogBridgeConfig();
+void LogFlaPathNodeDiagnostics();
 void LoadRuntimeRewriteRules();
 bool CopyMemoryWithProtect(uintptr_t destination, uintptr_t source, size_t size);
+bool WriteBytesWithProtect(uintptr_t destination, const uint8_t* bytes, size_t size);
 bool IsReadableCommitted(uintptr_t address, size_t size);
 bool IsWritableCommitted(uintptr_t address, size_t size);
 bool IsExecutableCommitted(uintptr_t address);
 extern "C" int __stdcall Bridge_IsReadableMemory(uintptr_t address, size_t size);
 bool IsValidCPool(uintptr_t pool);
+bool ReadCPoolHeader(uintptr_t pool, uint32_t* size, uint32_t* firstFree);
 bool ReadCorePoolPointers(uint32_t* pedPool, uint32_t* vehiclePool, uint32_t* objectPool, uint32_t* colModelPool);
+bool AreCorePoolsReadyForDeferredReplay(uint32_t* pedOut, uint32_t* vehicleOut, uint32_t* objectOut, uint32_t* colModelOut);
 bool EnsureLazyCPoolReady(uintptr_t poolPtr, const char* reason);
 void TriggerDeferredPoolAllocatesForPool(uintptr_t poolPtrAddress);
 bool EnsureLazyCoreCPoolsReady(const char* reason);
+bool EnsureBatchLazyCPoolsInitialised(const char* reason, bool forceRetry = false);
 bool IsReasonableWorldCoord(float value);
 uintptr_t DecodeRel32JumpTarget(uintptr_t address);
 uintptr_t ModuleBaseFromAddress(uintptr_t address, char* moduleName, size_t moduleNameSize);
 void LogRelocatedAddressDiagnostics();
 void LogPoolPointerDiagnostics();
+DWORD WINAPI PopulationPoolDiagnosticsThread(void*);
+DWORD WINAPI GangOnlyPopulationGuardThread(void*);
+DWORD WINAPI PedStreamingZoneRepairThread(void*);
+uint32_t ReadZoneStreamingCheatMaskForLog();
 void RefreshFlaRuntimeState();
 void LogCrashClassification(EXCEPTION_POINTERS* info);
 void LogBytes(const char* label, uintptr_t address, size_t count);
-bool TryEnsureCPoolsInitialised(const char* reason);
+void LogStreamingPedFunctionEntryDiagnostics(const char* reason);
+bool TryEnsureCPoolsInitialised(const char* reason, bool allowEarlyRecovery = false);
 HMODULE FindFlaModule();
 bool ResolveFlaExtendedIdApi();
 bool IsFlaDifficultHighIdMode();
 int32_t ReadExtendedIdFrom16BitField(const void* field);
+uint32_t ReadIniU32(const char* key, uint32_t defaultValue);
 void RuntimeRewriteHardcodedAddressConstants(bool logDetails = true);
 DWORD WINAPI RuntimeRewriteRescanThread(void*);
 DWORD WINAPI EarlyProperShadersCompatThread(void*);
@@ -602,22 +760,37 @@ void InstallCleoPlusExtendedObjectVarGuard();
 void InstallCleoPlusPoolAllocateGuard();
 void InstallMixSetsPoolAllocateGuard();
 void InstallUrbanizePoolAllocateGuard();
+void InstallVehFuncsPoolAllocateGuard();
 void InstallAutoPoolAllocateGuards();
 DWORD WINAPI DeferredPoolAllocateReplayThread(void*);
+DWORD WINAPI MixSetsPoolAllocateGuardInstallThread(void*);
+DWORD WINAPI UrbanizePoolAllocateGuardInstallThread(void*);
+DWORD WINAPI VehFuncsPoolAllocateGuardInstallThread(void*);
 void InstallAnimUncompressNullGuard();
 void InstallAnimStaticAssocInitGuard();
 void InstallAnimUpdateBlendGuard();
+void InstallAnimBlendGroupGuard();
 void InstallAnimFrameUpdateSkinnedGuard();
 void InstallAnimFrameUpdateSkinnedVelocityGuard();
+void InstallRpAnimBlendClumpInitGuard();
+void InstallRwClumpForAllAtomicsGuard();
+void InstallShouldModelBeStreamedGuard();
+void InstallStreamingBusyThresholdPatch();
+void InstallPopulationUpdateBudgetPatch();
+int RepairOpenLimitAdjusterSaPoolHooks(const char* phase);
+DWORD WINAPI OpenLimitAdjusterRepairThread(void*);
 
 // Pattern scanning for pool allocate guards
 uintptr_t FindPatternInModuleText(HMODULE module, const uint8_t* pattern, const char* mask, size_t patternLen);
 uint32_t CalculateModuleTextHash(HMODULE module);
 uintptr_t FindAllocateBlocksByPattern(HMODULE module, const char* typeName, uintptr_t expectedPoolPtr);
+bool LooksLikePluginSdkPoolAllocateBlocks(uintptr_t address, uintptr_t expectedPoolPtr);
+HMODULE FindLoadedModuleBySubstring(const char* needle);
 void InstallGetBoundCentreNullGuard();
 void InstallGetBoundRectColModelGuard();
 DWORD WINAPI PreloadUrbanizePedModelsThread(void*);
 bool ContainsCaseInsensitive(const char* haystack, const char* needle);
+bool IniValueLooksEnabled(const char* value);
 extern "C" bool __stdcall Bridge_IsValidAnimHierarchy(uintptr_t hierarchy);
 extern "C" bool __stdcall Bridge_IsWritableMemory(uintptr_t address, size_t size);
 extern "C" bool __stdcall Bridge_IsExecutableMemory(uintptr_t address);
@@ -631,14 +804,19 @@ extern "C" void __stdcall Bridge_DeferPoolAllocate(uintptr_t poolPtrAddress, uin
 extern "C" void __stdcall Bridge_InvokePoolAllocateContinue(uintptr_t continueAddress, uintptr_t thisPtr, uintptr_t poolPtr);
 extern "C" void __stdcall Bridge_LogInvalidAnimHierarchy(uintptr_t hierarchy, uintptr_t returnAddress, uintptr_t stack);
 extern "C" bool __stdcall Bridge_IsValidStaticAssociation(uintptr_t staticAssociation);
+extern "C" bool __stdcall Bridge_ShouldBlockGroupBlendAnimation(uint32_t groupId, uint32_t animId);
 extern "C" void __stdcall Bridge_RepairInvalidStaticAssociation(uintptr_t runtimeAssociation, uintptr_t staticAssociation);
 extern "C" bool __stdcall Bridge_PrepareAnimAssociationUpdate(uintptr_t association);
 extern "C" bool __stdcall Bridge_PrepareAnimFrameUpdateData(uintptr_t updateData);
+extern "C" bool __stdcall Bridge_ShouldSkipRpAnimBlendClumpInit(uintptr_t clump, uintptr_t returnAddress, uintptr_t stack);
+extern "C" bool __stdcall Bridge_IsSafeRpClumpForAllAtomicsCall(uintptr_t clump, uintptr_t callback, uintptr_t data, uintptr_t returnAddress, uintptr_t stack);
+extern "C" void __stdcall Bridge_LogInvalidShouldModelBeStreamedColModel(uintptr_t entity, uintptr_t modelInfo, uintptr_t colModel, uintptr_t stack);
 extern "C" void __stdcall Bridge_LogInvalidBoundCentreOut(uintptr_t entity, uintptr_t outVec, uintptr_t returnAddress, uintptr_t stack);
 extern "C" bool __stdcall Bridge_HasValidBoundRectColModel(uintptr_t entity);
 extern "C" void __stdcall Bridge_FillFallbackBoundRect(uintptr_t entity, BridgeRect* outRect);
 extern "C" uintptr_t __stdcall Bridge_GetSafeCleoDispatchTarget(uintptr_t dispatchObject);
 extern "C" int __cdecl Bridge_CRadar_GetActualBlipArrayIndex(uint32_t blip);
+extern "C" bool __cdecl Bridge_CStreaming_IsVeryBusy();
 
 #if defined(_M_IX86)
 extern "C" __declspec(naked) void Bridge_CObject_Create_5A1FA1()
@@ -875,6 +1053,27 @@ extern "C" __declspec(naked) void Bridge_AnimUpdateBlend_Guard()
     }
 }
 
+extern "C" __declspec(naked) void Bridge_AnimBlendGroup_Guard()
+{
+    __asm
+    {
+        push dword ptr [esp + 0x0C] // animId
+        push dword ptr [esp + 0x0C] // groupId, adjusted after first push
+        call Bridge_ShouldBlockGroupBlendAnimation
+        test al, al
+        jnz blockBlend
+
+        sub esp, 0x14
+        mov ecx, [esp + 0x18]
+        push dword ptr [g_animBlendGroupContinue]
+        retn
+
+    blockBlend:
+        xor eax, eax
+        ret
+    }
+}
+
 extern "C" __declspec(naked) void Bridge_AnimFrameUpdateSkinnedVelocity_Guard()
 {
     __asm
@@ -917,6 +1116,80 @@ extern "C" __declspec(naked) void Bridge_AnimFrameUpdateSkinned_Guard()
         retn
 
     skipFrameUpdate:
+        retn
+    }
+}
+
+extern "C" __declspec(naked) void Bridge_RpAnimBlendClumpInit_Guard()
+{
+    __asm
+    {
+        mov eax, esp
+        push eax                    // original stack
+        push dword ptr [eax]        // original return address
+        push dword ptr [eax + 0x04] // clump
+        call Bridge_ShouldSkipRpAnimBlendClumpInit
+        test al, al
+        jnz skipInit
+
+        push esi
+        mov esi, [esp + 0x08]
+        push dword ptr [g_rpAnimBlendClumpInitContinue]
+        retn
+
+    skipInit:
+        ret
+    }
+}
+
+extern "C" __declspec(naked) void Bridge_RpClumpForAllAtomics_Guard()
+{
+    __asm
+    {
+        mov eax, esp
+        push eax                    // original stack
+        push dword ptr [eax]        // original return address
+        push dword ptr [eax + 0x0C] // data
+        push dword ptr [eax + 0x08] // callback
+        push dword ptr [eax + 0x04] // clump
+        call Bridge_IsSafeRpClumpForAllAtomicsCall
+        test al, al
+        jz invalidCall
+
+        mov eax, [esp + 0x04]
+        push ebx
+        push dword ptr [g_rwClumpForAllAtomicsContinue]
+        retn
+
+    invalidCall:
+        xor eax, eax
+        ret
+    }
+}
+
+extern "C" __declspec(naked) void Bridge_ShouldModelBeStreamed_ColModelGuard()
+{
+    __asm
+    {
+        cmp eax, 10000h
+        jb invalidColModel
+
+        fld dword ptr [eax + 0x24]
+        fadd dword ptr [esp + 0x20]
+        push dword ptr [g_shouldModelBeStreamedContinue]
+        retn
+
+    invalidColModel:
+        fstp st(0)
+        pushad
+        push dword ptr [esp + 12]
+        push eax
+        push edi
+        push esi
+        call Bridge_LogInvalidShouldModelBeStreamedColModel
+        popad
+
+        push dword ptr [g_shouldModelBeStreamedReturnFalse]
         retn
     }
 }
@@ -1328,18 +1601,59 @@ void WriteDefaultBridgeConfigIfMissing()
         "[Diagnostics]\n"
         "EnableVectoredExceptionHandler = 1\n"
         "EnableExceptionDiagnostics = 1\n"
+        "EnableStackScanDiagnostics = 0\n"
+        "EnableMemoryRegionDiagnostics = 0\n"
         "EnableBoundCentreVehRecovery = 1\n"
+        "; Skips one failed CPtrList insertion when PtrNodeSingle/PtrNodeDouble allocation returns null instead of crashing.\n"
+        "EnablePtrNodeExhaustionGuard = 1\n"
         "EnableExceptionLoopBreaker = 1\n"
         "ExceptionLoopBreakerTerminate = 1\n"
         "ExceptionLoopBreakerThreshold = 32\n"
         "MaxExceptionLogs = 16\n"
-        "EnableModuleSnapshot = 1\n"
-        "EnableRiskConstantScan = 1\n"
-        "EnableRelocatedAddressDiagnostics = 1\n"
-        "EnablePoolPointerDiagnostics = 1\n"
+        "EnableModuleSnapshot = 0\n"
+        "EnableRiskConstantScan = 0\n"
+        "EnableRelocatedAddressDiagnostics = 0\n"
+        "EnablePoolPointerDiagnostics = 0\n"
+        "; Runtime population pool sampling. Logs Ped/Vehicle/Object pool usage after a save is loaded.\n"
+        "EnablePopulationPoolDiagnostics = 0\n"
+        "PopulationPoolDiagStartDelayMs = 15000\n"
+        "PopulationPoolDiagIntervalMs = 5000\n"
+        "PopulationPoolDiagIterations = 24\n"
+        "; Clears the vanilla GANGS_CONTROLS_THE_STREETS population latch if a save/mod leaves it stuck on.\n"
+        "; This does not clear GANGMEMBERS_EVERYWHERE, so gang/Urbanize content can still spawn normally.\n"
+        "EnableGangOnlyPopulationGuard = 1\n"
+        "GangOnlyPopulationGuardStartDelayMs = 15000\n"
+        "GangOnlyPopulationGuardIntervalMs = 5000\n"
+        "GangOnlyPopulationGuardIterations = 72\n"
+        "GangOnlyPopulationGuardClearCheatFlag = 1\n"
+        "; Watches the vanilla CStreaming pedestrian-zone slots. If popcycle has a valid outdoor zone\n"
+        "; but CStreaming::ms_pedsLoaded stays empty, call the original StreamZoneModels entry a few times.\n"
+        "; This is diagnostic and self-limited: it logs the function hook target and only runs outside interiors.\n"
+        "EnablePedStreamingZoneRepair = 1\n"
+        "PedStreamingZoneRepairCallOriginal = 1\n"
+        "PedStreamingZoneRepairStartDelayMs = 20000\n"
+        "PedStreamingZoneRepairIntervalMs = 2000\n"
+        "PedStreamingZoneRepairIterations = 180\n"
+        "PedStreamingZoneRepairMaxCalls = 12\n"
+        "PedStreamingZoneRepairMaxLogs = 64\n"
+        "; Raises CStreaming::IsVeryBusy threshold so heavy map/LOD preloading does not starve normal pedestrian streaming forever.\n"
+        "EnableStreamingBusyThresholdPatch = 1\n"
+        "StreamingBusyThreshold = 128\n"
+        "; Raises CGame::Process population generation budget. Vanilla 4 ms skips walking-ped creation when streaming updates are expensive.\n"
+        "EnablePopulationUpdateBudgetPatch = 1\n"
+        "PopulationUpdateBudgetMs = 33\n"
         "EnableCrashClassification = 1\n"
-        "EnableRuntimeRewriteAudit = 1\n"
-        "EnableOpenLimitAdjusterOverlapAudit = 1\n"
+        "EnableRuntimeRewriteAudit = 0\n"
+        "EnableOpenLimitAdjusterOverlapAudit = 0\n"
+        "; Logs whether FLA Paths map size / DAT node IDs match the installed nodes*.dat file set.\n"
+        "EnableFlaPathNodeDiagnostics = 0\n"
+        "; Source comparison with III.VC.SA.LimitAdjuster v1.6.1: OLA SA limits patch the same pools/lists that FLA owns.\n"
+        "; Keep this on when fastman92 Limit Adjuster/FLA++ is active. Use allowlist only for one-key experiments.\n"
+        "EnableOpenLimitAdjusterSaLimitGuard = 1\n"
+        "; Emergency isolation only. Set 1 to add OLA to modloader's IgnoreMods if OLA itself still crashes.\n"
+        "; Keep 0 for real coexistence testing; FLA++ will sanitize OLA SA overlaps instead.\n"
+        "EnableOpenLimitAdjusterModuleGuard = 0\n"
+        "OpenLimitAdjusterSaLimitAllowlist = \n"
         "\n"
         "[ModulePolicy]\n"
         "; Global compatibility policy shared by RuntimeRewrite and AutoPoolAllocateGuard.\n"
@@ -1430,6 +1744,15 @@ void WriteDefaultBridgeConfigIfMissing()
         "; Table-driven lazy CPool construction derived from FLA/original CPools::Initialise.\n"
         "; Builds only the missing pool requested by a guard, using capacities from fastman92limitAdjuster_GTASA.ini.\n"
         "EnableLazyCPoolRegistry = 1\n"
+        "; Keep 0. Batch-creating core CPools before the real game/FLA init path can leave the ped pool\n"
+        "; populated with model 0/player-type entries and causes normal pedestrians to stop spawning.\n"
+        "EnableBatchLazyCPoolInitialise = 0\n"
+        "; Keep 0. When CReplay::MarkEverythingAsNew first touches missing Ped/Vehicle pools,\n"
+        "; create only those pools via the lazy registry and continue; skipping this path crashes later.\n"
+        "EnableReplayPoolReadSkipGuard = 0\n"
+        "; Keep 0. Creating full core CPools before the real game/FLA init path can poison Ped population.\n"
+        "; Targeted lazy pool guards below still create only the single pool required to avoid a crash.\n"
+        "EnableEarlyCPoolsInitialiseRecovery = 0\n"
         "; Unsafe legacy recovery. Keep 0: calling CPools::Initialise from an exception path can leave pools half-initialized.\n"
         "; The bridge now waits for the real game initialization path and defers old plugin pool allocation until core pools are ready.\n"
         "EnableCPoolsInitialiseRecovery = 0\n"
@@ -1447,6 +1770,12 @@ void WriteDefaultBridgeConfigIfMissing()
         "EnableAnimUncompressGuard = 1\n"
         "EnableAnimStaticAssocGuard = 1\n"
         "EnableAnimFrameUpdateGuard = 1\n"
+        "; Guards RpAnimBlendClumpInit against null/corrupt clumps before animation data allocation.\n"
+        "EnableRpAnimBlendClumpInitGuard = 1\n"
+        "; Guards RenderWare RpClumpForAllAtomics against null/corrupt clumps from partially loaded model instances.\n"
+        "EnableRwClumpForAllAtomicsGuard = 1\n"
+        "; Guards CRenderer::ShouldModelBeStreamed against null collision models from partially streamed LOD/building entries.\n"
+        "EnableShouldModelBeStreamedGuard = 1\n"
         "EnableGetBoundCentreInlineGuard = 1\n"
         "EnableGetBoundRectColModelGuard = 1\n"
         "; Matrix guard master switch.\n"
@@ -1482,12 +1811,21 @@ void WriteDefaultBridgeConfigIfMissing()
         "[CLEOPlus]\n"
         "EnableCleoObjectCreateInlineRestore = 1\n"
         "EnableCleoDispatchGuard = 1\n"
+        "; Legacy emergency fallback only. Keep 0: creating core CPools from a bad CLEO+ dispatch target\n"
+        "; bypasses the real game/FLA initialization chain and can leave streets empty.\n"
+        "EnableCleoDispatchLazyPoolRecovery = 0\n"
         "EnableCleoThunk26720Guard = 1\n"
         "EnableCleoPlusExtendedObjectVarGuard = 0\n"
         "EnableCleoPlusPoolAllocateGuard = 1\n"
         "\n"
         "[MixSets]\n"
         "EnableMixSetsPoolAllocateGuard = 1\n"
+        "\n"
+        "[VehFuncs]\n"
+        "; Guards VehFuncs VehicleExtendedData::AllocateBlocks during early startup.\n"
+        "; VehFuncs reads CPools::ms_pVehiclePool directly; if FLA has not created it yet,\n"
+        "; the original function crashes at vehfuncs.asi+0x2965D. Keep this on when VehFuncs is installed.\n"
+        "EnableVehFuncsPoolAllocateGuard = 1\n"
         "\n"
         "[Urbanize]\n"
         "EnableUrbanizePoolAllocateGuard = 1\n"
@@ -1731,7 +2069,10 @@ void LoadBridgeConfig()
 
     g_config.enableVectoredExceptionHandler = ReadBridgeBool("EnableVectoredExceptionHandler", g_config.enableVectoredExceptionHandler);
     g_config.enableExceptionDiagnostics = ReadBridgeBool("EnableExceptionDiagnostics", g_config.enableExceptionDiagnostics);
+    g_config.enableStackScanDiagnostics = ReadBridgeBool("EnableStackScanDiagnostics", g_config.enableStackScanDiagnostics);
+    g_config.enableMemoryRegionDiagnostics = ReadBridgeBool("EnableMemoryRegionDiagnostics", g_config.enableMemoryRegionDiagnostics);
     g_config.enableBoundCentreVehRecovery = ReadBridgeBool("EnableBoundCentreVehRecovery", g_config.enableBoundCentreVehRecovery);
+    g_config.enablePtrNodeExhaustionGuard = ReadBridgeBool("EnablePtrNodeExhaustionGuard", g_config.enablePtrNodeExhaustionGuard);
     g_config.enableExceptionLoopBreaker = ReadBridgeBool("EnableExceptionLoopBreaker", g_config.enableExceptionLoopBreaker);
     g_config.exceptionLoopBreakerTerminate = ReadBridgeBool("ExceptionLoopBreakerTerminate", g_config.exceptionLoopBreakerTerminate);
     g_config.exceptionLoopBreakerThreshold = ReadBridgeInt("ExceptionLoopBreakerThreshold", g_config.exceptionLoopBreakerThreshold, 2, 10000);
@@ -1741,9 +2082,33 @@ void LoadBridgeConfig()
     g_config.enableRiskConstantScan = ReadBridgeBool("EnableRiskConstantScan", g_config.enableRiskConstantScan);
     g_config.enableRelocatedAddressDiagnostics = ReadBridgeBool("EnableRelocatedAddressDiagnostics", g_config.enableRelocatedAddressDiagnostics);
     g_config.enablePoolPointerDiagnostics = ReadBridgeBool("EnablePoolPointerDiagnostics", g_config.enablePoolPointerDiagnostics);
+    g_config.enablePopulationPoolDiagnostics = ReadBridgeBool("EnablePopulationPoolDiagnostics", g_config.enablePopulationPoolDiagnostics);
+    g_config.populationPoolDiagStartDelayMs = ReadBridgeInt("PopulationPoolDiagStartDelayMs", g_config.populationPoolDiagStartDelayMs, 0, 300000);
+    g_config.populationPoolDiagIntervalMs = ReadBridgeInt("PopulationPoolDiagIntervalMs", g_config.populationPoolDiagIntervalMs, 250, 60000);
+    g_config.populationPoolDiagIterations = ReadBridgeInt("PopulationPoolDiagIterations", g_config.populationPoolDiagIterations, 0, 10000);
+    g_config.enableGangOnlyPopulationGuard = ReadBridgeBool("EnableGangOnlyPopulationGuard", g_config.enableGangOnlyPopulationGuard);
+    g_config.gangOnlyPopulationGuardStartDelayMs = ReadBridgeInt("GangOnlyPopulationGuardStartDelayMs", g_config.gangOnlyPopulationGuardStartDelayMs, 0, 300000);
+    g_config.gangOnlyPopulationGuardIntervalMs = ReadBridgeInt("GangOnlyPopulationGuardIntervalMs", g_config.gangOnlyPopulationGuardIntervalMs, 250, 60000);
+    g_config.gangOnlyPopulationGuardIterations = ReadBridgeInt("GangOnlyPopulationGuardIterations", g_config.gangOnlyPopulationGuardIterations, 0, 10000);
+    g_config.gangOnlyPopulationGuardClearCheatFlag = ReadBridgeBool("GangOnlyPopulationGuardClearCheatFlag", g_config.gangOnlyPopulationGuardClearCheatFlag);
+    g_config.enablePedStreamingZoneRepair = ReadBridgeBool("EnablePedStreamingZoneRepair", g_config.enablePedStreamingZoneRepair);
+    g_config.pedStreamingZoneRepairCallOriginal = ReadBridgeBool("PedStreamingZoneRepairCallOriginal", g_config.pedStreamingZoneRepairCallOriginal);
+    g_config.pedStreamingZoneRepairStartDelayMs = ReadBridgeInt("PedStreamingZoneRepairStartDelayMs", g_config.pedStreamingZoneRepairStartDelayMs, 0, 300000);
+    g_config.pedStreamingZoneRepairIntervalMs = ReadBridgeInt("PedStreamingZoneRepairIntervalMs", g_config.pedStreamingZoneRepairIntervalMs, 250, 60000);
+    g_config.pedStreamingZoneRepairIterations = ReadBridgeInt("PedStreamingZoneRepairIterations", g_config.pedStreamingZoneRepairIterations, 0, 10000);
+    g_config.pedStreamingZoneRepairMaxCalls = ReadBridgeInt("PedStreamingZoneRepairMaxCalls", g_config.pedStreamingZoneRepairMaxCalls, 0, 10000);
+    g_config.pedStreamingZoneRepairMaxLogs = ReadBridgeInt("PedStreamingZoneRepairMaxLogs", g_config.pedStreamingZoneRepairMaxLogs, 0, 10000);
+    g_config.enableStreamingBusyThresholdPatch = ReadBridgeBool("EnableStreamingBusyThresholdPatch", g_config.enableStreamingBusyThresholdPatch);
+    g_config.streamingBusyThreshold = ReadBridgeInt("StreamingBusyThreshold", g_config.streamingBusyThreshold, 5, 10000);
+    g_config.enablePopulationUpdateBudgetPatch = ReadBridgeBool("EnablePopulationUpdateBudgetPatch", g_config.enablePopulationUpdateBudgetPatch);
+    g_config.populationUpdateBudgetMs = ReadBridgeInt("PopulationUpdateBudgetMs", g_config.populationUpdateBudgetMs, 1, 127);
     g_config.enableCrashClassification = ReadBridgeBool("EnableCrashClassification", g_config.enableCrashClassification);
     g_config.enableRuntimeRewriteAudit = ReadBridgeBool("EnableRuntimeRewriteAudit", g_config.enableRuntimeRewriteAudit);
     g_config.enableOpenLimitAdjusterOverlapAudit = ReadBridgeBool("EnableOpenLimitAdjusterOverlapAudit", g_config.enableOpenLimitAdjusterOverlapAudit);
+    g_config.enableFlaPathNodeDiagnostics = ReadBridgeBool("EnableFlaPathNodeDiagnostics", g_config.enableFlaPathNodeDiagnostics);
+    g_config.enableOpenLimitAdjusterSaLimitGuard = ReadBridgeBool("EnableOpenLimitAdjusterSaLimitGuard", g_config.enableOpenLimitAdjusterSaLimitGuard);
+    g_config.enableOpenLimitAdjusterModuleGuard = ReadBridgeBool("EnableOpenLimitAdjusterModuleGuard", g_config.enableOpenLimitAdjusterModuleGuard);
+    ReadBridgeText("OpenLimitAdjusterSaLimitAllowlist", g_config.openLimitAdjusterSaLimitAllowlist, sizeof(g_config.openLimitAdjusterSaLimitAllowlist));
     g_config.enableModulePolicy = ReadBridgeBool("EnableModulePolicy", g_config.enableModulePolicy);
     ReadBridgeText("LegacyModuleAllowlist", g_config.legacyModuleAllowlist, sizeof(g_config.legacyModuleAllowlist), ".cleo;.asi;modloader");
     ReadBridgeText("ModernModuleDenylist", g_config.modernModuleDenylist, sizeof(g_config.modernModuleDenylist),
@@ -1773,11 +2138,13 @@ void LoadBridgeConfig()
     g_config.enableCObjectCreateBridge = ReadBridgeBool("EnableCObjectCreateBridge", g_config.enableCObjectCreateBridge);
     g_config.enableCleoObjectCreateInlineRestore = ReadBridgeBool("EnableCleoObjectCreateInlineRestore", g_config.enableCleoObjectCreateInlineRestore);
     g_config.enableCleoDispatchGuard = ReadBridgeBool("EnableCleoDispatchGuard", g_config.enableCleoDispatchGuard);
+    g_config.enableCleoDispatchLazyPoolRecovery = ReadBridgeBool("EnableCleoDispatchLazyPoolRecovery", g_config.enableCleoDispatchLazyPoolRecovery);
     g_config.enableCleoThunk26720Guard = ReadBridgeBool("EnableCleoThunk26720Guard", g_config.enableCleoThunk26720Guard);
     g_config.enableCleoPlusExtendedObjectVarGuard = ReadBridgeBool("EnableCleoPlusExtendedObjectVarGuard", g_config.enableCleoPlusExtendedObjectVarGuard);
     g_config.enableCleoPlusPoolAllocateGuard = ReadBridgeBool("EnableCleoPlusPoolAllocateGuard", g_config.enableCleoPlusPoolAllocateGuard);
     g_config.enableMixSetsPoolAllocateGuard = ReadBridgeBool("EnableMixSetsPoolAllocateGuard", g_config.enableMixSetsPoolAllocateGuard);
     g_config.enableUrbanizePoolAllocateGuard = ReadBridgeBool("EnableUrbanizePoolAllocateGuard", g_config.enableUrbanizePoolAllocateGuard);
+    g_config.enableVehFuncsPoolAllocateGuard = ReadBridgeBool("EnableVehFuncsPoolAllocateGuard", g_config.enableVehFuncsPoolAllocateGuard);
     g_config.enableAutoPoolAllocateGuard = ReadBridgeBool("EnableAutoPoolAllocateGuard", g_config.enableAutoPoolAllocateGuard);
     g_config.enableDeferredPoolAllocateReplay = ReadBridgeBool("EnableDeferredPoolAllocateReplay", g_config.enableDeferredPoolAllocateReplay);
     g_config.autoPoolAllocateGuardMaxPatches = ReadBridgeInt("AutoPoolAllocateGuardMaxPatches", g_config.autoPoolAllocateGuardMaxPatches, 0, 10000);
@@ -1788,6 +2155,9 @@ void LoadBridgeConfig()
     g_config.enableAnimUncompressGuard = ReadBridgeBool("EnableAnimUncompressGuard", g_config.enableAnimUncompressGuard);
     g_config.enableAnimStaticAssocGuard = ReadBridgeBool("EnableAnimStaticAssocGuard", g_config.enableAnimStaticAssocGuard);
     g_config.enableAnimFrameUpdateGuard = ReadBridgeBool("EnableAnimFrameUpdateGuard", g_config.enableAnimFrameUpdateGuard);
+    g_config.enableRpAnimBlendClumpInitGuard = ReadBridgeBool("EnableRpAnimBlendClumpInitGuard", g_config.enableRpAnimBlendClumpInitGuard);
+    g_config.enableRwClumpForAllAtomicsGuard = ReadBridgeBool("EnableRwClumpForAllAtomicsGuard", g_config.enableRwClumpForAllAtomicsGuard);
+    g_config.enableShouldModelBeStreamedGuard = ReadBridgeBool("EnableShouldModelBeStreamedGuard", g_config.enableShouldModelBeStreamedGuard);
     g_config.enableGetBoundCentreInlineGuard = ReadBridgeBool("EnableGetBoundCentreInlineGuard", g_config.enableGetBoundCentreInlineGuard);
     g_config.enableGetBoundRectColModelGuard = ReadBridgeBool("EnableGetBoundRectColModelGuard", g_config.enableGetBoundRectColModelGuard);
     g_config.enablePlaceableRemoveMatrixGuard = ReadBridgeBool("EnablePlaceableRemoveMatrixGuard", g_config.enablePlaceableRemoveMatrixGuard);
@@ -1816,6 +2186,9 @@ void LoadBridgeConfig()
     g_config.enableColAccelStartCachePoolGuard = ReadBridgeBool("EnableColAccelStartCachePoolGuard", g_config.enableColAccelStartCachePoolGuard);
     g_config.enableColModelPoolNewGuard = ReadBridgeBool("EnableColModelPoolNewGuard", g_config.enableColModelPoolNewGuard);
     g_config.enableLazyCPoolRegistry = ReadBridgeBool("EnableLazyCPoolRegistry", g_config.enableLazyCPoolRegistry);
+    g_config.enableBatchLazyCPoolInitialise = ReadBridgeBool("EnableBatchLazyCPoolInitialise", g_config.enableBatchLazyCPoolInitialise);
+    g_config.enableReplayPoolReadSkipGuard = ReadBridgeBool("EnableReplayPoolReadSkipGuard", g_config.enableReplayPoolReadSkipGuard);
+    g_config.enableEarlyCPoolsInitialiseRecovery = ReadBridgeBool("EnableEarlyCPoolsInitialiseRecovery", g_config.enableEarlyCPoolsInitialiseRecovery);
     g_config.enableCPoolsInitialiseRecovery = ReadBridgeBool("EnableCPoolsInitialiseRecovery", g_config.enableCPoolsInitialiseRecovery);
     g_config.enableRadarBlipHandleGuard = ReadBridgeBool("EnableRadarBlipHandleGuard", g_config.enableRadarBlipHandleGuard);
     g_config.enableCleoTargetBlipCoordsBridge = ReadBridgeBool("EnableCleoTargetBlipCoordsBridge", g_config.enableCleoTargetBlipCoordsBridge);
@@ -1864,14 +2237,20 @@ void LoadBridgeConfig()
         g_config.enableVectoredExceptionHandler = false;
         g_config.enableExceptionDiagnostics = false;
         g_config.enableBoundCentreVehRecovery = false;
+        g_config.enablePtrNodeExhaustionGuard = false;
         g_config.enableExceptionLoopBreaker = false;
         g_config.enableModuleSnapshot = false;
         g_config.enableRiskConstantScan = false;
         g_config.enableRelocatedAddressDiagnostics = false;
         g_config.enablePoolPointerDiagnostics = false;
+        g_config.enablePopulationPoolDiagnostics = false;
+        g_config.enableGangOnlyPopulationGuard = false;
+        g_config.enablePedStreamingZoneRepair = false;
+        g_config.enableStreamingBusyThresholdPatch = false;
         g_config.enableCrashClassification = false;
         g_config.enableRuntimeRewriteAudit = false;
         g_config.enableOpenLimitAdjusterOverlapAudit = false;
+        g_config.enableFlaPathNodeDiagnostics = false;
     }
 
     if (!g_config.enableFLACompat) {
@@ -1886,6 +2265,9 @@ void LoadBridgeConfig()
         g_config.enableColAccelStartCachePoolGuard = false;
         g_config.enableColModelPoolNewGuard = false;
         g_config.enableLazyCPoolRegistry = false;
+        g_config.enableBatchLazyCPoolInitialise = false;
+        g_config.enableReplayPoolReadSkipGuard = false;
+        g_config.enableEarlyCPoolsInitialiseRecovery = false;
         g_config.enableCPoolsInitialiseRecovery = false;
     }
 
@@ -1899,11 +2281,15 @@ void LoadBridgeConfig()
         g_config.enableRuntimeRewriteRescan = false;
         g_config.enableRuntimeRewriteRuleTable = false;
         g_config.enableCObjectCreateBridge = false;
+        g_config.enableVehFuncsPoolAllocateGuard = false;
         g_config.enableAutoPoolAllocateGuard = false;
         g_config.enableDeferredPoolAllocateReplay = false;
         g_config.enableAnimUncompressGuard = false;
         g_config.enableAnimStaticAssocGuard = false;
         g_config.enableAnimFrameUpdateGuard = false;
+        g_config.enableRpAnimBlendClumpInitGuard = false;
+        g_config.enableRwClumpForAllAtomicsGuard = false;
+        g_config.enableShouldModelBeStreamedGuard = false;
         g_config.enableGetBoundCentreInlineGuard = false;
         g_config.enableGetBoundRectColModelGuard = false;
         g_config.enablePlaceableRemoveMatrixGuard = false;
@@ -1917,6 +2303,7 @@ void LoadBridgeConfig()
     if (!g_config.enableCLEOPlusCompat) {
         g_config.enableCleoObjectCreateInlineRestore = false;
         g_config.enableCleoDispatchGuard = false;
+        g_config.enableCleoDispatchLazyPoolRecovery = false;
         g_config.enableCleoThunk26720Guard = false;
         g_config.enableCleoPlusExtendedObjectVarGuard = false;
         g_config.enableCleoPlusPoolAllocateGuard = false;
@@ -1938,6 +2325,15 @@ void LoadBridgeConfig()
     }
     if (!g_config.enableMixSetsCompat) {
         g_config.enableMixSetsPoolAllocateGuard = false;
+    }
+
+    if ((g_config.enableCleoPlusPoolAllocateGuard ||
+         g_config.enableMixSetsPoolAllocateGuard ||
+         g_config.enableUrbanizePoolAllocateGuard ||
+         g_config.enableVehFuncsPoolAllocateGuard) &&
+        !g_config.enableDeferredPoolAllocateReplay) {
+        g_config.enableDeferredPoolAllocateReplay = true;
+        Log("pool guard config: forced EnableDeferredPoolAllocateReplay=1 because targeted ExtendedData pool guards are enabled");
     }
 
     if (g_config.specialActorMaxModelId < g_config.specialActorMinModelId) {
@@ -1966,10 +2362,11 @@ void LogBridgeConfig()
         g_config.forceNoRuntimeRewrite,
         g_config.forceNoAutoPoolGuard,
         g_config.enableProperShadersCompat ? 1 : 0);
-    Log("bridge config: VEH=%d exceptionDiag=%d boundCentreVEH=%d loopBreaker=%d loopTerminate=%d loopThreshold=%d maxExceptionLogs=%d moduleSnapshot=%d riskScan=%d relocatedDiag=%d poolDiag=%d crashClass=%d rewriteAudit=%d olaOverlapAudit=%d rewrite=%d rewriteRescan=%d rewriteRuleTable=%d rewriteRules=%u rescanDelay=%d rescanIterations=%d rescanInterval=%d defaultMaxPatches=%d allowlist='%s' denylist='%s'",
+    Log("bridge config: VEH=%d exceptionDiag=%d boundCentreVEH=%d ptrNodeGuard=%d loopBreaker=%d loopTerminate=%d loopThreshold=%d maxExceptionLogs=%d moduleSnapshot=%d riskScan=%d relocatedDiag=%d poolDiag=%d populationPoolDiag=%d populationDelay=%d populationInterval=%d populationIterations=%d crashClass=%d rewriteAudit=%d olaOverlapAudit=%d pathNodeDiag=%d olaSaGuard=%d olaModuleGuard=%d olaSaAllowlist='%s' rewrite=%d rewriteRescan=%d rewriteRuleTable=%d rewriteRules=%u rescanDelay=%d rescanIterations=%d rescanInterval=%d defaultMaxPatches=%d allowlist='%s' denylist='%s'",
         g_config.enableVectoredExceptionHandler ? 1 : 0,
         g_config.enableExceptionDiagnostics ? 1 : 0,
         g_config.enableBoundCentreVehRecovery ? 1 : 0,
+        g_config.enablePtrNodeExhaustionGuard ? 1 : 0,
         g_config.enableExceptionLoopBreaker ? 1 : 0,
         g_config.exceptionLoopBreakerTerminate ? 1 : 0,
         g_config.exceptionLoopBreakerThreshold,
@@ -1978,9 +2375,17 @@ void LogBridgeConfig()
         g_config.enableRiskConstantScan ? 1 : 0,
         g_config.enableRelocatedAddressDiagnostics ? 1 : 0,
         g_config.enablePoolPointerDiagnostics ? 1 : 0,
+        g_config.enablePopulationPoolDiagnostics ? 1 : 0,
+        g_config.populationPoolDiagStartDelayMs,
+        g_config.populationPoolDiagIntervalMs,
+        g_config.populationPoolDiagIterations,
         g_config.enableCrashClassification ? 1 : 0,
         g_config.enableRuntimeRewriteAudit ? 1 : 0,
         g_config.enableOpenLimitAdjusterOverlapAudit ? 1 : 0,
+        g_config.enableFlaPathNodeDiagnostics ? 1 : 0,
+        g_config.enableOpenLimitAdjusterSaLimitGuard ? 1 : 0,
+        g_config.enableOpenLimitAdjusterModuleGuard ? 1 : 0,
+        g_config.openLimitAdjusterSaLimitAllowlist,
         g_config.enableRuntimeRewrite ? 1 : 0,
         g_config.enableRuntimeRewriteRescan ? 1 : 0,
         g_config.enableRuntimeRewriteRuleTable ? 1 : 0,
@@ -1991,6 +2396,23 @@ void LogBridgeConfig()
         g_config.runtimeRewriteDefaultMaxPatchesPerModule,
         g_config.runtimeRewriteAllowlist,
         g_config.runtimeRewriteDenylist);
+    Log("bridge config: gangOnlyPopulationGuard=%d guardDelay=%d guardInterval=%d guardIterations=%d clearGangLandCheat=%d pedZoneRepair=%d pedZoneCallOriginal=%d pedZoneDelay=%d pedZoneInterval=%d pedZoneIterations=%d pedZoneMaxCalls=%d pedZoneMaxLogs=%d streamingBusyPatch=%d streamingBusyThreshold=%d populationBudgetPatch=%d populationBudgetMs=%d",
+        g_config.enableGangOnlyPopulationGuard ? 1 : 0,
+        g_config.gangOnlyPopulationGuardStartDelayMs,
+        g_config.gangOnlyPopulationGuardIntervalMs,
+        g_config.gangOnlyPopulationGuardIterations,
+        g_config.gangOnlyPopulationGuardClearCheatFlag ? 1 : 0,
+        g_config.enablePedStreamingZoneRepair ? 1 : 0,
+        g_config.pedStreamingZoneRepairCallOriginal ? 1 : 0,
+        g_config.pedStreamingZoneRepairStartDelayMs,
+        g_config.pedStreamingZoneRepairIntervalMs,
+        g_config.pedStreamingZoneRepairIterations,
+        g_config.pedStreamingZoneRepairMaxCalls,
+        g_config.pedStreamingZoneRepairMaxLogs,
+        g_config.enableStreamingBusyThresholdPatch ? 1 : 0,
+        g_config.streamingBusyThreshold,
+        g_config.enablePopulationUpdateBudgetPatch ? 1 : 0,
+        g_config.populationUpdateBudgetMs);
     Log("bridge config: modelShadow=%d streamingShadow=%d flaExtendedIdApi=%d shadowDelay=%d shadowIterations=%d shadowInterval=%d",
         g_config.enableLegacyModelInfoShadow ? 1 : 0,
         g_config.enableLegacyStreamingInfoShadow ? 1 : 0,
@@ -2011,17 +2433,23 @@ void LogBridgeConfig()
         g_config.specialActorMaxAutoCatalogNames,
         g_config.specialActorCatalogBuildDelayMs,
         g_config.specialActorAutoScanFilter);
-    Log("bridge config: cobjectBridge=%d cleoObjectRestore=%d cleoDispatch=%d cleoThunk=%d cleoExtObjVarGuard=%d cleoPoolAllocGuard=%d urbanizePoolAllocGuard=%d animUncompress=%d animStatic=%d animFrame=%d boundCentreInline=%d boundRectColModel=%d placeableRemoveMatrix=%d urbanizePedPreload=%d flaNoCollisionRestore=%d bridgeCheatLoader=%d trainInitRepair=%d flaObjectInitRestore=%d colAccelPoolGuard=%d colModelPoolNewGuard=%d lazyCPoolRegistry=%d cPoolsRecovery=%d radarBlipGuard=%d cleoTargetBlipBridge=%d radarTraceRewrite=%d closestCarNode03D3=%d taxi77SetCarGuard=%d taxi77Watchdog=%d taxi77Recovery=%d sanPabloSpecialActor=%d taxi77PollMs=%d taxi77StuckSeconds=%d taxi77Start=0x%X taxi77Active=[0x%X,0x%X)",
+    Log("bridge config: cobjectBridge=%d cleoObjectRestore=%d cleoDispatch=%d cleoDispatchLazyPoolRecovery=%d cleoThunk=%d cleoExtObjVarGuard=%d cleoPoolAllocGuard=%d mixSetsPoolAllocGuard=%d urbanizePoolAllocGuard=%d vehFuncsPoolAllocGuard=%d animUncompress=%d animStatic=%d animFrame=%d rpAnimClumpInit=%d rwClump=%d shouldStream=%d boundCentreInline=%d boundRectColModel=%d placeableRemoveMatrix=%d urbanizePedPreload=%d flaNoCollisionRestore=%d bridgeCheatLoader=%d trainInitRepair=%d flaObjectInitRestore=%d colAccelPoolGuard=%d colModelPoolNewGuard=%d lazyCPoolRegistry=%d batchLazyCPools=%d replayPoolSkip=%d earlyCPoolsRecovery=%d cPoolsRecovery=%d radarBlipGuard=%d cleoTargetBlipBridge=%d radarTraceRewrite=%d closestCarNode03D3=%d taxi77SetCarGuard=%d taxi77Watchdog=%d taxi77Recovery=%d sanPabloSpecialActor=%d taxi77PollMs=%d taxi77StuckSeconds=%d taxi77Start=0x%X taxi77Active=[0x%X,0x%X)",
         g_config.enableCObjectCreateBridge ? 1 : 0,
         g_config.enableCleoObjectCreateInlineRestore ? 1 : 0,
         g_config.enableCleoDispatchGuard ? 1 : 0,
+        g_config.enableCleoDispatchLazyPoolRecovery ? 1 : 0,
         g_config.enableCleoThunk26720Guard ? 1 : 0,
         g_config.enableCleoPlusExtendedObjectVarGuard ? 1 : 0,
         g_config.enableCleoPlusPoolAllocateGuard ? 1 : 0,
+        g_config.enableMixSetsPoolAllocateGuard ? 1 : 0,
         g_config.enableUrbanizePoolAllocateGuard ? 1 : 0,
+        g_config.enableVehFuncsPoolAllocateGuard ? 1 : 0,
         g_config.enableAnimUncompressGuard ? 1 : 0,
         g_config.enableAnimStaticAssocGuard ? 1 : 0,
         g_config.enableAnimFrameUpdateGuard ? 1 : 0,
+        g_config.enableRpAnimBlendClumpInitGuard ? 1 : 0,
+        g_config.enableRwClumpForAllAtomicsGuard ? 1 : 0,
+        g_config.enableShouldModelBeStreamedGuard ? 1 : 0,
         g_config.enableGetBoundCentreInlineGuard ? 1 : 0,
         g_config.enableGetBoundRectColModelGuard ? 1 : 0,
         g_config.enablePlaceableRemoveMatrixGuard ? 1 : 0,
@@ -2033,6 +2461,9 @@ void LogBridgeConfig()
         g_config.enableColAccelStartCachePoolGuard ? 1 : 0,
         g_config.enableColModelPoolNewGuard ? 1 : 0,
         g_config.enableLazyCPoolRegistry ? 1 : 0,
+        g_config.enableBatchLazyCPoolInitialise ? 1 : 0,
+        g_config.enableReplayPoolReadSkipGuard ? 1 : 0,
+        g_config.enableEarlyCPoolsInitialiseRecovery ? 1 : 0,
         g_config.enableCPoolsInitialiseRecovery ? 1 : 0,
         g_config.enableRadarBlipHandleGuard ? 1 : 0,
         g_config.enableCleoTargetBlipCoordsBridge ? 1 : 0,
@@ -2064,50 +2495,173 @@ void LogIniValue(const char* key)
     }
 }
 
+bool FileNameLooksLikeNodeDat(const char* name, uint32_t* slotOut)
+{
+    if (!name || _strnicmp(name, "nodes", 5) != 0) {
+        return false;
+    }
+
+    const char* p = name + 5;
+    if (*p < '0' || *p > '9') {
+        return false;
+    }
+
+    uint32_t value = 0;
+    while (*p >= '0' && *p <= '9') {
+        value = value * 10u + static_cast<uint32_t>(*p - '0');
+        ++p;
+    }
+
+    if (_stricmp(p, ".dat") != 0) {
+        return false;
+    }
+
+    if (slotOut) {
+        *slotOut = value;
+    }
+    return true;
+}
+
+void ScanLooseNodeDatFiles(const char* root, int depth, uint32_t* count, uint32_t* maxSlot)
+{
+    if (!root || !count || !maxSlot || depth > 12 || GetFileAttributesA(root) == INVALID_FILE_ATTRIBUTES) {
+        return;
+    }
+
+    char pattern[MAX_PATH]{};
+    sprintf_s(pattern, "%s\\*", root);
+
+    WIN32_FIND_DATAA data{};
+    HANDLE find = FindFirstFileA(pattern, &data);
+    if (find == INVALID_HANDLE_VALUE) {
+        return;
+    }
+
+    do {
+        if (std::strcmp(data.cFileName, ".") == 0 || std::strcmp(data.cFileName, "..") == 0) {
+            continue;
+        }
+
+        char path[MAX_PATH]{};
+        sprintf_s(path, "%s\\%s", root, data.cFileName);
+
+        if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            ScanLooseNodeDatFiles(path, depth + 1, count, maxSlot);
+            continue;
+        }
+
+        uint32_t slot = 0;
+        if (FileNameLooksLikeNodeDat(data.cFileName, &slot)) {
+            ++(*count);
+            if (slot > *maxSlot) {
+                *maxSlot = slot;
+            }
+        }
+    } while (FindNextFileA(find, &data));
+
+    FindClose(find);
+}
+
+void LogFlaPathNodeDiagnostics()
+{
+    if (!g_config.enableFlaPathNodeDiagnostics) {
+        return;
+    }
+
+    const uint32_t dff = ReadIniU32("FILE_TYPE_DFF", 20000);
+    const uint32_t txd = ReadIniU32("FILE_TYPE_TXD", 5000);
+    const uint32_t col = ReadIniU32("FILE_TYPE_COL", 255);
+    const uint32_t ipl = ReadIniU32("FILE_TYPE_IPL", 256);
+    const uint32_t datBase = dff + txd + col + ipl;
+    const uint32_t pathsMapSize = ReadIniU32("Paths map size", 6000);
+    constexpr uint32_t kPathBlockSize = 750;
+    const uint32_t tilesPerDimension = pathsMapSize / kPathBlockSize;
+    const uint32_t requiredDatFiles = tilesPerDimension * tilesPerDimension;
+    const uint32_t datLast = requiredDatFiles ? datBase + requiredDatFiles - 1 : datBase;
+
+    char pathPatchText[64]{};
+    char pathDebugText[64]{};
+    const bool pathPatch = ReadSmallTextValue("fastman92limitAdjuster_GTASA.ini", "Apply paths limit patch", pathPatchText, sizeof(pathPatchText)) &&
+        IniValueLooksEnabled(pathPatchText);
+    const bool pathDebug = ReadSmallTextValue("fastman92limitAdjuster_GTASA.ini", "Enable path debugging", pathDebugText, sizeof(pathDebugText)) &&
+        IniValueLooksEnabled(pathDebugText);
+
+    uint32_t looseNodes = 0;
+    uint32_t looseMaxSlot = 0;
+    ScanLooseNodeDatFiles("data", 0, &looseNodes, &looseMaxSlot);
+    ScanLooseNodeDatFiles("modloader", 0, &looseNodes, &looseMaxSlot);
+
+    Log("FLA path diag: pathsMapSize=%u pathPatch=%d pathDebug=%d tilesPerDimension=%u requiredDatNodes=%u datBase=%u datLast=%u looseNodesDat=%u looseMaxSlot=%u",
+        pathsMapSize,
+        pathPatch ? 1 : 0,
+        pathDebug ? 1 : 0,
+        tilesPerDimension,
+        requiredDatFiles,
+        datBase,
+        datLast,
+        looseNodes,
+        looseMaxSlot);
+
+    if (pathsMapSize != 6000 || requiredDatFiles > 64) {
+        Log("FLA path diag: expanded Paths map size requires a matching nodes0.dat..nodes%u.dat set; missing entries produce 0x4087EA undefined DAT ID requests",
+            requiredDatFiles ? requiredDatFiles - 1 : 0);
+        if (requiredDatFiles > 64) {
+            const uint32_t sampleSlot = requiredDatFiles > 1890 ? 1890 : 64;
+            Log("FLA path diag: example mapping globalID=%u -> nodes%u.dat",
+                datBase + sampleSlot,
+                sampleSlot);
+        }
+        if (looseNodes == 0 || looseMaxSlot + 1 < requiredDatFiles) {
+            Log("FLA path diag: installed loose nodes*.dat files do not cover the configured expanded DAT range");
+        }
+    }
+}
+
 struct OlaSaOverlapSpec {
     const char* key;
+    const char* flaKey;
     const char* owner;
 };
 
 const OlaSaOverlapSpec kOlaSaOverlapSpecs[] = {
-    {"PtrNodeSingle", "FLA PtrNode Singles"},
-    {"PtrNodeDouble", "FLA PtrNode Doubles"},
-    {"EntryInfoNode", "FLA EntryInfoNodes"},
-    {"Peds", "FLA CPools Peds"},
-    {"PedIntelligence", "FLA CPools PedIntelligence"},
-    {"Vehicles", "FLA CPools Vehicles"},
-    {"Buildings", "FLA CPools Buildings"},
-    {"Objects", "FLA CPools Objects"},
-    {"Dummys", "FLA CPools Dummies"},
-    {"ColModel", "FLA CPools ColModels"},
-    {"Task", "FLA task allocator / old-mod guards"},
-    {"Event", "FLA task/event limits"},
-    {"PointRoute", "FLA CPools PointRoute"},
-    {"PatrolRoute", "FLA CPools PatrolRoute"},
-    {"NodeRoute", "FLA CPools NodeRoute"},
-    {"TaskAllocator", "FLA CPools TaskAllocator"},
-    {"PedAttractors", "FLA CPools PedAttractors"},
-    {"VehicleStructs", "FLA vehicle/model limits"},
-    {"MatrixList", "FLA matrix/physical object limits"},
-    {"OutsideWorldWaterBlocks", "FLA map/render limits"},
-    {"AlphaEntityList", "FLA visibility limits"},
-    {"VisibleEntityPtrs", "FLA visibility limits"},
-    {"VisibleLodPtrs", "FLA visibility limits"},
-    {"StreamingObjectInstancesList", "FLA streaming/render limits"},
-    {"AtomicModels", "FLA model ID limits"},
-    {"DamageAtomicModels", "FLA model ID limits"},
-    {"TimeModels", "FLA model ID limits"},
-    {"ClumpModels", "FLA model ID limits"},
-    {"VehicleModels", "FLA model ID limits"},
-    {"PedModels", "FLA model ID limits"},
-    {"WeaponModels", "FLA model ID limits"},
-    {"EntitiesPerIpl", "FLA map/IPL limits"},
-    {"EntityIpl", "FLA map/IPL limits"},
-    {"StaticShadows", "FLA shadow limits"},
-    {"Coronas", "FLA corona limits"},
-    {"ScriptSearchLights", "FLA script/searchlight limits"},
-    {"FrameLimit", "external FPS plugin / FLA timing policy"},
-    {"MemoryAvailable", "FLA streaming memory"}
+    {"PtrNodeSingle", "PtrNode Singles", "FLA PtrNode Singles"},
+    {"PtrNodeDouble", "PtrNode Doubles", "FLA PtrNode Doubles"},
+    {"EntryInfoNode", "EntryInfoNodes", "FLA EntryInfoNodes"},
+    {"Peds", "Peds", "FLA CPools Peds"},
+    {"PedIntelligence", "PedIntelligence", "FLA CPools PedIntelligence"},
+    {"Vehicles", "Vehicles", "FLA CPools Vehicles"},
+    {"Buildings", "Buildings", "FLA CPools Buildings"},
+    {"Objects", "Objects", "FLA CPools Objects"},
+    {"Dummys", "Dummies", "FLA CPools Dummies"},
+    {"ColModel", "ColModels", "FLA CPools ColModels"},
+    {"Task", "Tasks", "FLA task allocator / old-mod guards"},
+    {"Event", "Events", "FLA task/event limits"},
+    {"PointRoute", "PointRoute", "FLA CPools PointRoute"},
+    {"PatrolRoute", "PatrolRoute", "FLA CPools PatrolRoute"},
+    {"NodeRoute", "NodeRoute", "FLA CPools NodeRoute"},
+    {"TaskAllocator", "TaskAllocator", "FLA CPools TaskAllocator"},
+    {"PedAttractors", "PedAttractors", "FLA CPools PedAttractors"},
+    {"VehicleStructs", "VehicleStructs", "FLA vehicle/model limits"},
+    {"MatrixList", "Matrices", "FLA matrix/physical object limits"},
+    {"OutsideWorldWaterBlocks", "Blocks to be rendered outside world", "FLA map/render limits"},
+    {"AlphaEntityList", "Alpha entity list limit", "FLA visibility limits"},
+    {"VisibleEntityPtrs", "Visible entity pointers", "FLA visibility limits"},
+    {"VisibleLodPtrs", "Visible LOD pointers", "FLA visibility limits"},
+    {"StreamingObjectInstancesList", "rwObjectInstances", "FLA streaming/render limits"},
+    {"AtomicModels", nullptr, "FLA model ID limits"},
+    {"DamageAtomicModels", nullptr, "FLA model ID limits"},
+    {"TimeModels", nullptr, "FLA model ID limits"},
+    {"ClumpModels", nullptr, "FLA model ID limits"},
+    {"VehicleModels", "Vehicle Models", "FLA model ID limits"},
+    {"PedModels", "Ped Models", "FLA model ID limits"},
+    {"WeaponModels", "Weapon Models", "FLA model ID limits"},
+    {"EntitiesPerIpl", "Inst entries per file", "FLA map/IPL limits"},
+    {"EntityIpl", "Entity index array", "FLA map/IPL limits"},
+    {"StaticShadows", "Static shadows", "FLA shadow limits"},
+    {"Coronas", "Coronas", "FLA corona limits"},
+    {"ScriptSearchLights", nullptr, "FLA script/searchlight limits"},
+    {"FrameLimit", nullptr, "external FPS plugin / FLA timing policy"},
+    {"MemoryAvailable", "Memory available", "FLA streaming memory"}
 };
 
 bool IniValueLooksEnabled(const char* value)
@@ -2131,19 +2685,614 @@ bool IniValueLooksEnabled(const char* value)
     return true;
 }
 
-void AuditOpenLimitAdjusterSaOverlaps()
+bool FlaOwnsOlaSaLimit(const OlaSaOverlapSpec& spec)
+{
+    if (!spec.flaKey || !spec.flaKey[0]) {
+        return false;
+    }
+
+    char value[128]{};
+    if (!ReadSmallTextValue("fastman92limitAdjuster_GTASA.ini", spec.flaKey, value, sizeof(value))) {
+        return false;
+    }
+
+    return IniValueLooksEnabled(value);
+}
+
+const OlaSaOverlapSpec* FindOlaSaOverlapSpec(const char* key)
+{
+    if (!key || !key[0]) {
+        return nullptr;
+    }
+
+    for (const OlaSaOverlapSpec& spec : kOlaSaOverlapSpecs) {
+        if (_stricmp(key, spec.key) == 0) {
+            return &spec;
+        }
+    }
+    return nullptr;
+}
+
+bool TokenListContainsExact(const char* rawList, const char* value)
+{
+    if (!rawList || !rawList[0] || !value || !value[0]) {
+        return false;
+    }
+
+    char list[512]{};
+    strncpy_s(list, rawList, _TRUNCATE);
+
+    char* context = nullptr;
+    for (char* token = strtok_s(list, ";, \t", &context);
+        token;
+        token = strtok_s(nullptr, ";, \t", &context)) {
+        if (_stricmp(token, value) == 0) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool ExtractIniSectionName(const char* line, size_t len, char* out, size_t outSize)
+{
+    if (!line || !out || outSize == 0) {
+        return false;
+    }
+
+    size_t start = 0;
+    while (start < len && (line[start] == ' ' || line[start] == '\t')) {
+        ++start;
+    }
+    if (start >= len || line[start] != '[') {
+        return false;
+    }
+
+    size_t end = start + 1;
+    while (end < len && line[end] != ']') {
+        ++end;
+    }
+    if (end >= len || line[end] != ']') {
+        return false;
+    }
+
+    size_t nameStart = start + 1;
+    while (nameStart < end && (line[nameStart] == ' ' || line[nameStart] == '\t')) {
+        ++nameStart;
+    }
+
+    size_t nameEnd = end;
+    while (nameEnd > nameStart && (line[nameEnd - 1] == ' ' || line[nameEnd - 1] == '\t')) {
+        --nameEnd;
+    }
+
+    const size_t copyLen = (nameEnd > nameStart) ? min(nameEnd - nameStart, outSize - 1) : 0;
+    if (copyLen == 0) {
+        out[0] = '\0';
+        return false;
+    }
+
+    std::memcpy(out, line + nameStart, copyLen);
+    out[copyLen] = '\0';
+    return true;
+}
+
+bool ExtractIniKeyName(const char* line, size_t len, char* out, size_t outSize)
+{
+    if (!line || !out || outSize == 0) {
+        return false;
+    }
+
+    size_t start = 0;
+    while (start < len && (line[start] == ' ' || line[start] == '\t')) {
+        ++start;
+    }
+
+    if (start >= len ||
+        line[start] == ';' ||
+        line[start] == '#' ||
+        line[start] == '\r' ||
+        line[start] == '\n' ||
+        line[start] == '\0') {
+        return false;
+    }
+
+    size_t eq = start;
+    while (eq < len && line[eq] != '=' && line[eq] != '\r' && line[eq] != '\n' && line[eq] != '\0') {
+        ++eq;
+    }
+    if (eq >= len || line[eq] != '=') {
+        return false;
+    }
+
+    size_t keyEnd = eq;
+    while (keyEnd > start && (line[keyEnd - 1] == ' ' || line[keyEnd - 1] == '\t')) {
+        --keyEnd;
+    }
+    if (keyEnd <= start) {
+        return false;
+    }
+
+    const size_t copyLen = min(keyEnd - start, outSize - 1);
+    std::memcpy(out, line + start, copyLen);
+    out[copyLen] = '\0';
+    return true;
+}
+
+bool AppendText(char* output, size_t capacity, size_t* used, const char* text, size_t len)
+{
+    if (!output || !used || !text) {
+        return false;
+    }
+    if (*used + len >= capacity) {
+        return false;
+    }
+
+    std::memcpy(output + *used, text, len);
+    *used += len;
+    output[*used] = '\0';
+    return true;
+}
+
+bool ExtractModloaderIgnoreEntry(const char* line, size_t len, char* out, size_t outSize)
+{
+    if (!line || !out || outSize == 0) {
+        return false;
+    }
+
+    size_t start = 0;
+    while (start < len && (line[start] == ' ' || line[start] == '\t')) {
+        ++start;
+    }
+
+    if (start >= len ||
+        line[start] == ';' ||
+        line[start] == '#' ||
+        line[start] == '[' ||
+        line[start] == '\r' ||
+        line[start] == '\n' ||
+        line[start] == '\0') {
+        return false;
+    }
+
+    size_t end = start;
+    while (end < len &&
+        line[end] != ';' &&
+        line[end] != '#' &&
+        line[end] != '\r' &&
+        line[end] != '\n' &&
+        line[end] != '\0') {
+        ++end;
+    }
+
+    while (end > start && (line[end - 1] == ' ' || line[end - 1] == '\t')) {
+        --end;
+    }
+
+    if (end <= start) {
+        return false;
+    }
+
+    const size_t copyLen = min(end - start, outSize - 1);
+    std::memcpy(out, line + start, copyLen);
+    out[copyLen] = '\0';
+    return true;
+}
+
+void GuardOpenLimitAdjusterModuleLoad(const char* phase)
+{
+    if (!g_config.enableOpenLimitAdjusterModuleGuard) {
+        return;
+    }
+
+    const char* olaAsi = "modloader\\OLA\\III.VC.SA.LimitAdjuster.asi";
+    if (GetFileAttributesA(olaAsi) == INVALID_FILE_ATTRIBUTES) {
+        Log("OLA module guard: ASI not found path=%s phase=%s", olaAsi, phase ? phase : "");
+        return;
+    }
+
+    const char* path = "modloader\\modloader.ini";
+    HANDLE file = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) {
+        Log("OLA module guard: modloader config open failed path=%s gle=%lu phase=%s",
+            path,
+            GetLastError(),
+            phase ? phase : "");
+        return;
+    }
+
+    const DWORD fileSize = GetFileSize(file, nullptr);
+    if (fileSize == INVALID_FILE_SIZE || fileSize > 1024 * 1024) {
+        Log("OLA module guard: refusing modloader config size=%lu path=%s phase=%s",
+            fileSize,
+            path,
+            phase ? phase : "");
+        CloseHandle(file);
+        return;
+    }
+
+    char* input = new char[fileSize + 1];
+    DWORD bytesRead = 0;
+    const BOOL readOk = ReadFile(file, input, fileSize, &bytesRead, nullptr);
+    CloseHandle(file);
+    if (!readOk) {
+        Log("OLA module guard: modloader config read failed path=%s gle=%lu phase=%s",
+            path,
+            GetLastError(),
+            phase ? phase : "");
+        delete[] input;
+        return;
+    }
+    input[bytesRead] = '\0';
+
+    const char* newline = std::strstr(input, "\r\n") ? "\r\n" : "\n";
+    const char* comment = "; FLA++: OLA ASI is isolated because FLA++ owns SA limits in this setup.";
+    const char* entry = "OLA";
+
+    const size_t outputCapacity = static_cast<size_t>(bytesRead) + 4096;
+    char* output = new char[outputCapacity];
+    size_t outputUsed = 0;
+    output[0] = '\0';
+
+    bool inIgnoreMods = false;
+    bool foundIgnoreMods = false;
+    bool hasOlaIgnore = false;
+    bool inserted = false;
+    bool appendOk = true;
+
+    auto appendOlaIgnore = [&]() -> bool {
+        if (!AppendText(output, outputCapacity, &outputUsed, comment, std::strlen(comment)) ||
+            !AppendText(output, outputCapacity, &outputUsed, newline, std::strlen(newline)) ||
+            !AppendText(output, outputCapacity, &outputUsed, entry, std::strlen(entry)) ||
+            !AppendText(output, outputCapacity, &outputUsed, newline, std::strlen(newline))) {
+            return false;
+        }
+        inserted = true;
+        return true;
+    };
+
+    size_t pos = 0;
+    while (pos < bytesRead) {
+        const size_t lineStart = pos;
+        while (pos < bytesRead && input[pos] != '\n') {
+            ++pos;
+        }
+        if (pos < bytesRead && input[pos] == '\n') {
+            ++pos;
+        }
+
+        const char* line = input + lineStart;
+        const size_t lineLen = pos - lineStart;
+
+        char section[96]{};
+        const bool isSection = ExtractIniSectionName(line, lineLen, section, sizeof(section));
+        if (isSection && inIgnoreMods && !hasOlaIgnore && !inserted) {
+            appendOk = appendOlaIgnore();
+            if (!appendOk) {
+                break;
+            }
+        }
+
+        appendOk = AppendText(output, outputCapacity, &outputUsed, line, lineLen);
+        if (!appendOk) {
+            break;
+        }
+
+        if (isSection) {
+            inIgnoreMods = _stricmp(section, "Profiles.Default.IgnoreMods") == 0;
+            if (inIgnoreMods) {
+                foundIgnoreMods = true;
+            }
+            continue;
+        }
+
+        if (inIgnoreMods) {
+            char ignoreEntry[260]{};
+            if (ExtractModloaderIgnoreEntry(line, lineLen, ignoreEntry, sizeof(ignoreEntry)) &&
+                _stricmp(ignoreEntry, "OLA") == 0) {
+                hasOlaIgnore = true;
+            }
+        }
+    }
+
+    if (appendOk && !hasOlaIgnore && !inserted) {
+        if (!foundIgnoreMods) {
+            appendOk = AppendText(output, outputCapacity, &outputUsed, newline, std::strlen(newline)) &&
+                AppendText(output, outputCapacity, &outputUsed, "[Profiles.Default.IgnoreMods]", 29) &&
+                AppendText(output, outputCapacity, &outputUsed, newline, std::strlen(newline));
+        }
+        if (appendOk) {
+            appendOk = appendOlaIgnore();
+        }
+    }
+
+    if (!appendOk) {
+        Log("OLA module guard: output buffer exhausted path=%s phase=%s", path, phase ? phase : "");
+        delete[] output;
+        delete[] input;
+        return;
+    }
+
+    if (hasOlaIgnore) {
+        Log("OLA module guard: already ignored in modloader config path=%s phase=%s", path, phase ? phase : "");
+        delete[] output;
+        delete[] input;
+        return;
+    }
+
+    if (inserted) {
+        CopyFileA(path, "modloader\\modloader.ini.fla++bak", FALSE);
+
+        char tempPath[MAX_PATH]{};
+        sprintf_s(tempPath, "%s.fla++tmp", path);
+        HANDLE outFile = CreateFileA(tempPath, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (outFile == INVALID_HANDLE_VALUE) {
+            Log("OLA module guard: temp open failed path=%s gle=%lu phase=%s",
+                tempPath,
+                GetLastError(),
+                phase ? phase : "");
+            delete[] output;
+            delete[] input;
+            return;
+        }
+
+        DWORD written = 0;
+        const BOOL writeOk = WriteFile(outFile, output, static_cast<DWORD>(outputUsed), &written, nullptr);
+        CloseHandle(outFile);
+
+        if (!writeOk || written != outputUsed) {
+            Log("OLA module guard: temp write failed path=%s written=%lu expected=%u gle=%lu phase=%s",
+                tempPath,
+                written,
+                static_cast<unsigned>(outputUsed),
+                GetLastError(),
+                phase ? phase : "");
+            DeleteFileA(tempPath);
+            delete[] output;
+            delete[] input;
+            return;
+        }
+
+        if (!MoveFileExA(tempPath, path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED)) {
+            Log("OLA module guard: replace failed temp=%s path=%s gle=%lu phase=%s",
+                tempPath,
+                path,
+                GetLastError(),
+                phase ? phase : "");
+            DeleteFileA(tempPath);
+            delete[] output;
+            delete[] input;
+            return;
+        }
+
+        Log("OLA module guard: added OLA to [Profiles.Default.IgnoreMods] path=%s phase=%s",
+            path,
+            phase ? phase : "");
+    }
+
+    delete[] output;
+    delete[] input;
+}
+
+void GuardOpenLimitAdjusterSaLimitsAtPath(const char* path, const char* phase)
+{
+    if (!g_config.enableOpenLimitAdjusterSaLimitGuard) {
+        return;
+    }
+
+    if (GetFileAttributesA(path) == INVALID_FILE_ATTRIBUTES) {
+        Log("OLA SA limit guard: config not found path=%s phase=%s", path, phase ? phase : "");
+        return;
+    }
+
+    HANDLE file = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) {
+        Log("OLA SA limit guard: open failed path=%s gle=%lu phase=%s", path, GetLastError(), phase ? phase : "");
+        return;
+    }
+
+    const DWORD fileSize = GetFileSize(file, nullptr);
+    if (fileSize == INVALID_FILE_SIZE || fileSize > 1024 * 1024) {
+        Log("OLA SA limit guard: refusing file size=%lu path=%s phase=%s", fileSize, path, phase ? phase : "");
+        CloseHandle(file);
+        return;
+    }
+
+    char* input = new char[fileSize + 1];
+    DWORD bytesRead = 0;
+    const BOOL readOk = ReadFile(file, input, fileSize, &bytesRead, nullptr);
+    CloseHandle(file);
+    if (!readOk) {
+        Log("OLA SA limit guard: read failed path=%s gle=%lu phase=%s", path, GetLastError(), phase ? phase : "");
+        delete[] input;
+        return;
+    }
+    input[bytesRead] = '\0';
+
+    const size_t outputCapacity = static_cast<size_t>(bytesRead) + 65536;
+    char* output = new char[outputCapacity];
+    size_t outputUsed = 0;
+    output[0] = '\0';
+
+    bool inSaLimits = false;
+    int disabled = 0;
+    int allowed = 0;
+    int alreadyCommented = 0;
+    int removedAutoComments = 0;
+    bool appendOk = true;
+    static const char disabledPrefix[] = "; FLA++ disabled OLA SA overlap: ";
+    constexpr size_t disabledPrefixLen = sizeof(disabledPrefix) - 1;
+
+    size_t pos = 0;
+    while (pos < bytesRead) {
+        const size_t lineStart = pos;
+        while (pos < bytesRead && input[pos] != '\n') {
+            ++pos;
+        }
+        if (pos < bytesRead && input[pos] == '\n') {
+            ++pos;
+        }
+
+        const char* line = input + lineStart;
+        const size_t lineLen = pos - lineStart;
+
+        char section[64]{};
+        if (ExtractIniSectionName(line, lineLen, section, sizeof(section))) {
+            inSaLimits = _stricmp(section, "SALIMITS") == 0;
+        }
+
+        const char* trimmed = line;
+        while (trimmed < line + lineLen && (*trimmed == ' ' || *trimmed == '\t')) {
+            ++trimmed;
+        }
+        if (inSaLimits &&
+            static_cast<size_t>((line + lineLen) - trimmed) >= disabledPrefixLen &&
+            _strnicmp(trimmed, disabledPrefix, disabledPrefixLen) == 0) {
+            ++removedAutoComments;
+            continue;
+        }
+
+        const OlaSaOverlapSpec* spec = nullptr;
+        char key[96]{};
+        if (inSaLimits && ExtractIniKeyName(line, lineLen, key, sizeof(key))) {
+            spec = FindOlaSaOverlapSpec(key);
+        }
+
+        if (spec && TokenListContainsExact(g_config.openLimitAdjusterSaLimitAllowlist, spec->key)) {
+            ++allowed;
+            Log("OLA SA limit guard: allowlisted key='%s' phase=%s", spec->key, phase ? phase : "");
+            spec = nullptr;
+        }
+
+        if (spec && !FlaOwnsOlaSaLimit(*spec)) {
+            ++allowed;
+            Log("OLA SA limit guard: allowed key='%s' owner='OLA' reason='FLA key inactive or unmapped' flaKey='%s' phase=%s",
+                spec->key,
+                spec->flaKey ? spec->flaKey : "",
+                phase ? phase : "");
+            spec = nullptr;
+        }
+
+        if (spec) {
+            appendOk = AppendText(output, outputCapacity, &outputUsed, "#", 1) &&
+                AppendText(output, outputCapacity, &outputUsed, line, lineLen);
+            ++disabled;
+            Log("OLA SA limit guard: disabled key='%s' owner='%s' phase=%s",
+                spec->key,
+                spec->owner,
+                phase ? phase : "");
+        } else {
+            appendOk = AppendText(output, outputCapacity, &outputUsed, line, lineLen);
+        }
+
+        if (!appendOk) {
+            break;
+        }
+
+        if (inSaLimits && (*trimmed == ';' || *trimmed == '#')) {
+            char commentedKey[96]{};
+            const char* p = trimmed + 1;
+            while (p < line + lineLen && (*p == ' ' || *p == '\t')) {
+                ++p;
+            }
+            if (ExtractIniKeyName(p, static_cast<size_t>((line + lineLen) - p), commentedKey, sizeof(commentedKey)) &&
+                FindOlaSaOverlapSpec(commentedKey)) {
+                ++alreadyCommented;
+            }
+        }
+    }
+
+    if (!appendOk) {
+        Log("OLA SA limit guard: output buffer exhausted path=%s phase=%s", path, phase ? phase : "");
+        delete[] output;
+        delete[] input;
+        return;
+    }
+
+    if (disabled > 0 || removedAutoComments > 0) {
+        CopyFileA(path, "modloader\\OLA\\III.VC.SA.LimitAdjuster.ini.fla++bak", FALSE);
+
+        char tempPath[MAX_PATH]{};
+        sprintf_s(tempPath, "%s.fla++tmp", path);
+        HANDLE outFile = CreateFileA(tempPath, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (outFile == INVALID_HANDLE_VALUE) {
+            Log("OLA SA limit guard: temp open failed path=%s gle=%lu phase=%s", tempPath, GetLastError(), phase ? phase : "");
+            delete[] output;
+            delete[] input;
+            return;
+        }
+
+        DWORD written = 0;
+        const BOOL writeOk = WriteFile(outFile, output, static_cast<DWORD>(outputUsed), &written, nullptr);
+        CloseHandle(outFile);
+
+        if (!writeOk || written != outputUsed) {
+            Log("OLA SA limit guard: temp write failed path=%s written=%lu expected=%u gle=%lu phase=%s",
+                tempPath,
+                written,
+                static_cast<unsigned>(outputUsed),
+                GetLastError(),
+                phase ? phase : "");
+            DeleteFileA(tempPath);
+            delete[] output;
+            delete[] input;
+            return;
+        }
+
+        if (!MoveFileExA(tempPath, path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED)) {
+            Log("OLA SA limit guard: replace failed temp=%s path=%s gle=%lu phase=%s",
+                tempPath,
+                path,
+                GetLastError(),
+                phase ? phase : "");
+            DeleteFileA(tempPath);
+            delete[] output;
+            delete[] input;
+            return;
+        }
+    }
+
+    Log("OLA SA limit guard: done disabled=%d allowlisted=%d alreadyCommented=%d removedAutoComments=%d path=%s phase=%s",
+        disabled,
+        allowed,
+        alreadyCommented,
+        removedAutoComments,
+        path,
+        phase ? phase : "");
+
+    delete[] output;
+    delete[] input;
+}
+
+void GuardOpenLimitAdjusterSaLimits(const char* phase)
+{
+    static const char* paths[] = {
+        "III.VC.SA.LimitAdjuster.ini",
+        "modloader\\OLA\\III.VC.SA.LimitAdjuster.ini",
+        "Temp\\OLA\\III.VC.SA.LimitAdjuster.ini",
+    };
+
+    for (const char* path : paths) {
+        GuardOpenLimitAdjusterSaLimitsAtPath(path, phase);
+    }
+}
+
+void AuditOpenLimitAdjusterSaOverlapsAtPath(const char* path)
 {
     if (!g_config.enableOpenLimitAdjusterOverlapAudit) {
         return;
     }
 
-    const char* path = "modloader\\OLA\\III.VC.SA.LimitAdjuster.ini";
     if (GetFileAttributesA(path) == INVALID_FILE_ATTRIBUTES) {
         Log("OLA overlap audit: config not found path=%s", path);
         return;
     }
 
     int active = 0;
+    int conflicts = 0;
+    int allowed = 0;
     for (const OlaSaOverlapSpec& spec : kOlaSaOverlapSpecs) {
         char value[128]{};
         if (!ReadSectionTextValue(path, "SALIMITS", spec.key, value, sizeof(value))) {
@@ -2154,17 +3303,177 @@ void AuditOpenLimitAdjusterSaOverlaps()
         }
 
         ++active;
-        Log("OLA overlap audit: active SA limit key='%s' value='%s' conflictsWith='%s' action=disable-or-keep-commented-under-FLA++",
-            spec.key,
-            value,
-            spec.owner);
+        if (FlaOwnsOlaSaLimit(spec)) {
+            ++conflicts;
+            Log("OLA overlap audit: active SA limit key='%s' value='%s' conflictsWith='%s' flaKey='%s' action=guard-will-comment",
+                spec.key,
+                value,
+                spec.owner,
+                spec.flaKey ? spec.flaKey : "");
+        } else {
+            ++allowed;
+            Log("OLA overlap audit: active SA limit key='%s' value='%s' owner=OLA allowed=1 flaKey='%s'",
+                spec.key,
+                value,
+                spec.flaKey ? spec.flaKey : "");
+        }
     }
 
     if (active == 0) {
-        Log("OLA overlap audit: OK no active [SALIMITS] entries; SA limit ownership stays with FLA/FLA++");
+        Log("OLA overlap audit: OK no active [SALIMITS] entries");
+    } else if (conflicts == 0) {
+        Log("OLA overlap audit: OK active=%d allowedByInactiveFla=%d conflicts=0", active, allowed);
     } else {
-        Log("OLA overlap audit: WARNING activeOverlaps=%d; OLA and FLA are both trying to own SA limits", active);
+        Log("OLA overlap audit: WARNING active=%d conflicts=%d allowedByInactiveFla=%d; OLA and FLA are both trying to own these limits", active, conflicts, allowed);
     }
+}
+
+void AuditOpenLimitAdjusterSaOverlaps()
+{
+    static const char* paths[] = {
+        "III.VC.SA.LimitAdjuster.ini",
+        "modloader\\OLA\\III.VC.SA.LimitAdjuster.ini",
+        "Temp\\OLA\\III.VC.SA.LimitAdjuster.ini",
+    };
+
+    for (const char* path : paths) {
+        AuditOpenLimitAdjusterSaOverlapsAtPath(path);
+    }
+}
+
+bool IsOpenLimitAdjusterAddress(uintptr_t address)
+{
+    if (!address) {
+        return false;
+    }
+
+    char moduleName[MAX_PATH]{};
+    ModuleBaseFromAddress(address, moduleName, sizeof(moduleName));
+    return ContainsCaseInsensitive(moduleName, "iii.vc.sa.limitadjuster") ||
+        ContainsCaseInsensitive(moduleName, "limitadjuster.asi");
+}
+
+bool PatchEntryLooksOpenLimitAdjusterOwned(uintptr_t address)
+{
+    if (!IsReadableCommitted(address, 5)) {
+        return false;
+    }
+
+    const uint8_t opcode = *reinterpret_cast<const uint8_t*>(address);
+    if (opcode != 0xE8 && opcode != 0xE9) {
+        return false;
+    }
+
+    const uintptr_t target = DecodeRel32JumpTarget(address);
+    return IsOpenLimitAdjusterAddress(target);
+}
+
+bool RestoreOpenLimitAdjusterPatchIfOwned(const char* label, uintptr_t address, const uint8_t* originalBytes, size_t size, const char* phase)
+{
+    if (!PatchEntryLooksOpenLimitAdjusterOwned(address)) {
+        return false;
+    }
+
+    const uintptr_t target = DecodeRel32JumpTarget(address);
+    char moduleName[MAX_PATH]{};
+    ModuleBaseFromAddress(target, moduleName, sizeof(moduleName));
+
+    if (WriteBytesWithProtect(address, originalBytes, size)) {
+        Log("OLA hook repair: restored %s at 0x%08X size=%u oldTarget=0x%08X module=%s phase=%s",
+            label,
+            static_cast<unsigned>(address),
+            static_cast<unsigned>(size),
+            static_cast<unsigned>(target),
+            moduleName,
+            phase ? phase : "");
+        return true;
+    } else {
+        Log("OLA hook repair: restore failed %s at 0x%08X size=%u oldTarget=0x%08X module=%s gle=%lu phase=%s",
+            label,
+            static_cast<unsigned>(address),
+            static_cast<unsigned>(size),
+            static_cast<unsigned>(target),
+            moduleName,
+            GetLastError(),
+            phase ? phase : "");
+        return false;
+    }
+}
+
+int RepairOpenLimitAdjusterSaPoolHooks(const char* phase)
+{
+    if (!g_config.enableOpenLimitAdjusterSaLimitGuard) {
+        return 0;
+    }
+
+    static const uint8_t ptrNodeSingleAlloc[] = {
+        0x8B, 0x0D, 0x84, 0x44, 0xB7, 0x00, 0xE9, 0xB5,
+        0xFE, 0xFF, 0xFF, 0x90, 0x90, 0x90, 0x90, 0x90
+    };
+    static const uint8_t ptrNodeSingleRelease[] = {
+        0x90, 0xE9, 0xF7, 0x77, 0xEB, 0xFF, 0x8B, 0x44,
+        0x24, 0x04, 0x53, 0x2B, 0x01, 0x8B, 0xD1, 0x8B,
+        0x49, 0x04, 0xC1, 0xF8, 0x03, 0x8A, 0x1C, 0x01,
+        0x03, 0xC8, 0x80, 0xCB, 0x80, 0x88, 0x19, 0x3B,
+        0x42, 0x0C, 0x5B, 0x7D, 0x03, 0x89, 0x42, 0x0C,
+        0xC3, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90
+    };
+    static const uint8_t ptrNodeDoubleAlloc[] = {
+        0x8B, 0x0D, 0x88, 0x44, 0xB7, 0x00, 0xE9, 0x15,
+        0xFF, 0xFF, 0xFF, 0x90, 0x90, 0x90, 0x90, 0x90
+    };
+    static const uint8_t ptrNodeDoubleRelease[] = {
+        0x8B, 0x4C, 0x24, 0x04, 0x56, 0x8B, 0x35, 0x88,
+        0x44, 0xB7, 0x00, 0x2B, 0x0E, 0xB8, 0xAB, 0xAA
+    };
+    static const uint8_t ptrNodeSingleInlineRelease[] = {
+        0x8B, 0x15, 0x84, 0x44, 0xB7, 0x00, 0x8B, 0x3A,
+        0x8B, 0xF2, 0x8B, 0x52, 0x04, 0x2B, 0xC7, 0xC1,
+        0xF8, 0x03, 0x80, 0x0C, 0x02, 0x80, 0x03, 0xD0,
+        0x3B, 0x46, 0x0C, 0x7D, 0x03, 0x89, 0x46, 0x0C
+    };
+    static const uint8_t ptrNodeDoubleInlineRelease[] = {
+        0x8B, 0x35, 0x88, 0x44, 0xB7, 0x00, 0x2B, 0x06,
+        0x8B, 0xD0, 0xB8, 0xAB, 0xAA, 0xAA, 0x2A, 0xF7,
+        0xEA, 0xD1, 0xFA, 0x8B, 0xC2, 0xC1, 0xE8, 0x1F,
+        0x03, 0xD0, 0x8B, 0x46, 0x04, 0x8A, 0x1C, 0x10,
+        0x03, 0xC2, 0x80, 0xCB, 0x80, 0x88, 0x18, 0x3B,
+        0x56, 0x0C, 0x7D, 0x03, 0x89, 0x56, 0x0C
+    };
+
+    int restored = 0;
+    restored += RestoreOpenLimitAdjusterPatchIfOwned("PtrNodeSingle::operator new", 0x00552380, ptrNodeSingleAlloc, sizeof(ptrNodeSingleAlloc), phase) ? 1 : 0;
+    restored += RestoreOpenLimitAdjusterPatchIfOwned("PtrNodeSingle::operator delete", 0x00552390, ptrNodeSingleRelease, sizeof(ptrNodeSingleRelease), phase) ? 1 : 0;
+    restored += RestoreOpenLimitAdjusterPatchIfOwned("PtrNodeDouble::operator new", 0x005523C0, ptrNodeDoubleAlloc, sizeof(ptrNodeDoubleAlloc), phase) ? 1 : 0;
+    restored += RestoreOpenLimitAdjusterPatchIfOwned("PtrNodeDouble::operator delete", 0x005523D0, ptrNodeDoubleRelease, sizeof(ptrNodeDoubleRelease), phase) ? 1 : 0;
+    restored += RestoreOpenLimitAdjusterPatchIfOwned("PtrNodeSingle inline release", 0x0055243B, ptrNodeSingleInlineRelease, sizeof(ptrNodeSingleInlineRelease), phase) ? 1 : 0;
+    restored += RestoreOpenLimitAdjusterPatchIfOwned("PtrNodeDouble inline release", 0x005524A9, ptrNodeDoubleInlineRelease, sizeof(ptrNodeDoubleInlineRelease), phase) ? 1 : 0;
+    return restored;
+}
+
+DWORD WINAPI OpenLimitAdjusterRepairThread(void*)
+{
+    bool loggedModule = false;
+    int totalRestored = 0;
+
+    for (int attempt = 0; attempt < 600; ++attempt) {
+        HMODULE module = GetModuleHandleA("III.VC.SA.LimitAdjuster.asi");
+        if (module && !loggedModule) {
+            loggedModule = true;
+            Log("OLA hook repair monitor: module loaded base=%p attempt=%d", module, attempt);
+        }
+
+        const int restored = RepairOpenLimitAdjusterSaPoolHooks("ola-repair-monitor");
+        if (restored > 0) {
+            totalRestored += restored;
+            Log("OLA hook repair monitor: restored=%d total=%d attempt=%d", restored, totalRestored, attempt);
+        }
+
+        Sleep(attempt < 120 ? 100 : 1000);
+    }
+
+    Log("OLA hook repair monitor: finished totalRestored=%d moduleSeen=%d", totalRestored, loggedModule ? 1 : 0);
+    return 0;
 }
 
 bool ReadLogAddress(const char* prefix, uintptr_t* out)
@@ -2447,6 +3756,10 @@ const char* TypeName(DWORD type)
 
 void LogMemoryRegion(const char* label, uintptr_t address)
 {
+    if (!g_config.enableMemoryRegionDiagnostics) {
+        return;
+    }
+
     MEMORY_BASIC_INFORMATION mbi{};
     const SIZE_T result = VirtualQuery(reinterpret_cast<const void*>(address), &mbi, sizeof(mbi));
     if (!result) {
@@ -2468,6 +3781,10 @@ void LogMemoryRegion(const char* label, uintptr_t address)
 
 void LogStackModules(uintptr_t esp)
 {
+    if (!g_config.enableStackScanDiagnostics) {
+        return;
+    }
+
     MEMORY_BASIC_INFORMATION mbi{};
     if (!VirtualQuery(reinterpret_cast<const void*>(esp), &mbi, sizeof(mbi)) || mbi.State != MEM_COMMIT ||
         (mbi.Protect & PAGE_NOACCESS) || (mbi.Protect & PAGE_GUARD)) {
@@ -2505,6 +3822,36 @@ bool SafeReadU32(uintptr_t address, uint32_t* out)
 
     __try {
         *out = *reinterpret_cast<const uint32_t*>(address);
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+bool SafeReadU8(uintptr_t address, uint8_t* out)
+{
+    if (!out || !IsReadableCommitted(address, sizeof(uint8_t))) {
+        return false;
+    }
+
+    __try {
+        *out = *reinterpret_cast<const uint8_t*>(address);
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+bool SafeReadF32(uintptr_t address, float* out)
+{
+    if (!out || !IsReadableCommitted(address, sizeof(float))) {
+        return false;
+    }
+
+    __try {
+        *out = *reinterpret_cast<const float*>(address);
         return true;
     }
     __except (EXCEPTION_EXECUTE_HANDLER) {
@@ -2631,6 +3978,1401 @@ void LogPoolPointerDiagnostics()
     LogOnePoolPointer("CPools::ms_pDummyPool", kOriginalDummyPoolPtr);
     LogOnePoolPointer("CPools::ms_pColModelPool", kOriginalColModelPoolPtr);
     LogOnePoolPointer("CColStore::ms_pColPool", kCColStorePoolPtr);
+}
+
+bool ReadPoolByteMap(uintptr_t pool, uintptr_t* objects, uintptr_t* byteMap, uint32_t* size, uint32_t* firstFree)
+{
+    uint32_t localObjects = 0;
+    uint32_t localByteMap = 0;
+    uint32_t localSize = 0;
+    uint32_t localFirstFree = 0xFFFFFFFF;
+    if (!ReadCPoolHeader(pool, &localSize, &localFirstFree) ||
+        !SafeReadU32(pool + 0x00, &localObjects) ||
+        !SafeReadU32(pool + 0x04, &localByteMap)) {
+        return false;
+    }
+
+    if (objects) {
+        *objects = localObjects;
+    }
+    if (byteMap) {
+        *byteMap = localByteMap;
+    }
+    if (size) {
+        *size = localSize;
+    }
+    if (firstFree) {
+        *firstFree = localFirstFree;
+    }
+    return true;
+}
+
+void LogPopulationPoolUsage(const char* label, uintptr_t poolPtrAddress)
+{
+    uint32_t poolValue = 0;
+    if (!SafeReadU32(poolPtrAddress, &poolValue) || !poolValue) {
+        Log("population diag: %s poolPtr=0x%08X pool=0x%08X unreadable-or-null",
+            label, poolPtrAddress, poolValue);
+        return;
+    }
+
+    uintptr_t objects = 0;
+    uintptr_t byteMap = 0;
+    uint32_t size = 0;
+    uint32_t firstFree = 0xFFFFFFFF;
+    if (!ReadPoolByteMap(poolValue, &objects, &byteMap, &size, &firstFree)) {
+        Log("population diag: %s poolPtr=0x%08X pool=0x%08X invalid-header",
+            label, poolPtrAddress, poolValue);
+        return;
+    }
+
+    if (!objects || !byteMap || !IsReadableCommitted(byteMap, static_cast<size_t>(size))) {
+        Log("population diag: %s pool=0x%08X objects=0x%08X byteMap=0x%08X size=%u firstFree=%u byteMapReadable=0",
+            label, poolValue, objects, byteMap, size, firstFree);
+        return;
+    }
+
+    uint32_t usedByHighEmptyBit = 0;
+    uint32_t freeByHighEmptyBit = 0;
+    uint32_t usedByLowEmptyBit = 0;
+    uint32_t freeByLowEmptyBit = 0;
+    uint32_t nonZeroFlags = 0;
+    uint8_t firstFlags[16]{};
+    const uint32_t firstCount = size < static_cast<uint32_t>(sizeof(firstFlags)) ? size : static_cast<uint32_t>(sizeof(firstFlags));
+
+    __try {
+        const auto* flags = reinterpret_cast<const uint8_t*>(byteMap);
+        for (uint32_t i = 0; i < size; ++i) {
+            const uint8_t flag = flags[i];
+            if (i < firstCount) {
+                firstFlags[i] = flag;
+            }
+            if (flag) {
+                ++nonZeroFlags;
+            }
+            if (flag & 0x80) {
+                ++freeByHighEmptyBit;
+            } else {
+                ++usedByHighEmptyBit;
+            }
+            if (flag & 0x01) {
+                ++freeByLowEmptyBit;
+            } else {
+                ++usedByLowEmptyBit;
+            }
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        Log("population diag: %s pool=0x%08X objects=0x%08X byteMap=0x%08X size=%u read-exception",
+            label, poolValue, objects, byteMap, size);
+        return;
+    }
+
+    char firstBytes[3 * sizeof(firstFlags) + 1]{};
+    size_t pos = 0;
+    for (uint32_t i = 0; i < firstCount && pos + 4 < sizeof(firstBytes); ++i) {
+        const int written = sprintf_s(firstBytes + pos, sizeof(firstBytes) - pos, "%02X ", firstFlags[i]);
+        if (written <= 0) {
+            break;
+        }
+        pos += static_cast<size_t>(written);
+    }
+
+    Log("population diag: %s pool=0x%08X objects=0x%08X byteMap=0x%08X size=%u used=%u free=%u firstFree=%u nonZeroFlags=%u usedLowBit=%u freeLowBit=%u firstFlags=%s",
+        label,
+        poolValue,
+        objects,
+        byteMap,
+        size,
+        usedByHighEmptyBit,
+        freeByHighEmptyBit,
+        firstFree,
+        nonZeroFlags,
+        usedByLowEmptyBit,
+        freeByLowEmptyBit,
+        firstBytes);
+}
+
+int ReadRuntimeByteForLog(uintptr_t address)
+{
+    uint8_t value = 0;
+    return SafeReadU8(address, &value) ? static_cast<int>(value) : -1;
+}
+
+uint32_t ReadRuntimeU32ForLog(uintptr_t address)
+{
+    uint32_t value = 0;
+    return SafeReadU32(address, &value) ? value : 0xFFFFFFFFu;
+}
+
+float ReadRuntimeFloatForLog(uintptr_t address)
+{
+    float value = 0.0f;
+    return SafeReadF32(address, &value) ? value : -9999.0f;
+}
+
+struct RuntimeVec3 {
+    float x;
+    float y;
+    float z;
+};
+
+bool IsReasonableRuntimeFloat(float value)
+{
+    return value > -1000000.0f && value < 1000000.0f;
+}
+
+bool IsReasonableRuntimeVec3(const RuntimeVec3& value)
+{
+    return IsReasonableRuntimeFloat(value.x) &&
+        IsReasonableRuntimeFloat(value.y) &&
+        IsReasonableRuntimeFloat(value.z);
+}
+
+bool SafeReadVec3(uintptr_t address, RuntimeVec3* out)
+{
+    if (!out) {
+        return false;
+    }
+
+    RuntimeVec3 value{};
+    if (!SafeReadF32(address + 0x00, &value.x) ||
+        !SafeReadF32(address + 0x04, &value.y) ||
+        !SafeReadF32(address + 0x08, &value.z) ||
+        !IsReasonableRuntimeVec3(value)) {
+        return false;
+    }
+
+    *out = value;
+    return true;
+}
+
+bool ReadEntityPosition(uintptr_t entity, RuntimeVec3* out, uintptr_t* matrixOut, bool* fromMatrixOut)
+{
+    if (!out) {
+        return false;
+    }
+
+    if (matrixOut) {
+        *matrixOut = 0;
+    }
+    if (fromMatrixOut) {
+        *fromMatrixOut = false;
+    }
+
+    uint32_t matrix32 = 0;
+    if (SafeReadU32(entity + kCPlaceableMatrixOffset, &matrix32) && matrix32) {
+        const uintptr_t matrix = static_cast<uintptr_t>(matrix32);
+        if (matrixOut) {
+            *matrixOut = matrix;
+        }
+        if (SafeReadVec3(matrix + kCMatrixPositionOffset, out)) {
+            if (fromMatrixOut) {
+                *fromMatrixOut = true;
+            }
+            return true;
+        }
+    }
+
+    return SafeReadVec3(entity + kCPlaceablePlacementPosOffset, out);
+}
+
+uintptr_t ReadFocusedPlayerPed()
+{
+    uint32_t ped = 0;
+    if (!SafeReadU32(kCWorldPlayers + kCPlayerInfoPedOffset, &ped)) {
+        return 0;
+    }
+    return static_cast<uintptr_t>(ped);
+}
+
+float DistanceSquared2D(const RuntimeVec3& a, const RuntimeVec3& b)
+{
+    const float dx = a.x - b.x;
+    const float dy = a.y - b.y;
+    return dx * dx + dy * dy;
+}
+
+struct ZoneStreamingCheatFlag {
+    size_t index;
+    uint32_t mask;
+};
+
+constexpr ZoneStreamingCheatFlag kZoneStreamingCheatFlags[] = {
+    { kCheatElvisIsEverywhere, 0x0001 },
+    { kCheatPedsAttackWithRockets, 0x0002 },
+    { kCheatBeachParty, 0x0004 },
+    { kCheatGangMembersEverywhere, 0x0008 },
+    { kCheatNinjaTheme, 0x0010 },
+    { kCheatSlutMagnet, 0x0020 },
+    { kCheatFunhouseTheme, 0x0040 },
+    { kCheatCountryTraffic, 0x0080 },
+};
+
+uint32_t ReadZoneStreamingCheatMaskForLog()
+{
+    uint32_t mask = 0;
+    for (const auto& flag : kZoneStreamingCheatFlags) {
+        if (ReadRuntimeByteForLog(kCheatsActive + flag.index) > 0) {
+            mask |= flag.mask;
+        }
+    }
+    return mask;
+}
+
+bool ClearZoneStreamingCheatsForMask(uint32_t mask)
+{
+    bool allCleared = true;
+    const uint8_t zero = 0;
+    for (const auto& flag : kZoneStreamingCheatFlags) {
+        if ((mask & flag.mask) == 0) {
+            continue;
+        }
+        if (!WriteBytesWithProtect(kCheatsActive + flag.index, &zero, sizeof(zero))) {
+            allCleared = false;
+        }
+    }
+    return allCleared;
+}
+
+void LogPopulationRuntimeState(const char* reason, int sampleIndex)
+{
+    const int onlyGang = ReadRuntimeByteForLog(kPopulationOnlyCreateRandomGangMembers);
+    const int dontGang = ReadRuntimeByteForLog(kPopulationDontCreateRandomGangMembers);
+    const int dontCops = ReadRuntimeByteForLog(kPopulationDontCreateRandomCops);
+    const int cheatGangEverywhere = ReadRuntimeByteForLog(kCheatsActive + kCheatGangMembersEverywhere);
+    const int cheatGangLand = ReadRuntimeByteForLog(kCheatsActive + kCheatGangsControlStreets);
+    const uint32_t streamRequested = ReadRuntimeU32ForLog(kStreamingNumModelsRequested);
+    const int loadingPriority = ReadRuntimeByteForLog(kRendererLoadingPriority);
+    const int disableStreaming = ReadRuntimeByteForLog(kStreamingDisableStreaming);
+    const int loadingBigModel = ReadRuntimeByteForLog(kStreamingLoadingBigModel);
+    const uint32_t zoneStreamingMask = ReadZoneStreamingCheatMaskForLog();
+    const bool streamBusy = loadingPriority > 0 || streamRequested > static_cast<uint32_t>(g_config.streamingBusyThreshold);
+
+    Log("population runtime: reason=%s sample=%d onlyGang=%d dontGang=%d dontCops=%d cheatGangEverywhere=%d cheatGangLand=%d zoneCheats=0x%02X streamBusy=%d requested=%u threshold=%d priorityReq=%u loadingPriority=%d disableStreaming=%d bigModel=%d msPeds=%u streamZone=%u density=%.3f maxPeds=%u popTotals total=%u mission=%u gang=%u civ=%u civMale=%u civFemale=%u cops=%u dealers=%u worldZone=%u popcycle other=%.2f cops=%.2f gangs=%.2f dealers=%.2f percOther=%.2f percCops=%.2f percGangs=%.2f zoneType=%u",
+        reason ? reason : "",
+        sampleIndex,
+        onlyGang,
+        dontGang,
+        dontCops,
+        cheatGangEverywhere,
+        cheatGangLand,
+        zoneStreamingMask,
+        streamBusy ? 1 : 0,
+        streamRequested,
+        g_config.streamingBusyThreshold,
+        ReadRuntimeU32ForLog(kStreamingNumPriorityRequests),
+        loadingPriority,
+        disableStreaming,
+        loadingBigModel,
+        ReadRuntimeU32ForLog(kStreamingNumPedsLoaded),
+        ReadRuntimeU32ForLog(kStreamingCurrentZoneType),
+        ReadRuntimeFloatForLog(kPopulationPedDensityMultiplier),
+        ReadRuntimeU32ForLog(kPopulationMaxNumberOfPedsInUse),
+        ReadRuntimeU32ForLog(kPopulationTotalPeds),
+        ReadRuntimeU32ForLog(kPopulationTotalMissionPeds),
+        ReadRuntimeU32ForLog(kPopulationTotalGangPeds),
+        ReadRuntimeU32ForLog(kPopulationTotalCivPeds),
+        ReadRuntimeU32ForLog(kPopulationNumCivMale),
+        ReadRuntimeU32ForLog(kPopulationNumCivFemale),
+        ReadRuntimeU32ForLog(kPopulationNumCops),
+        ReadRuntimeU32ForLog(kPopulationNumDealers),
+        ReadRuntimeU32ForLog(kPopulationCurrentWorldZone),
+        ReadRuntimeFloatForLog(kPopCycleNumOtherPeds),
+        ReadRuntimeFloatForLog(kPopCycleNumCopsPeds),
+        ReadRuntimeFloatForLog(kPopCycleNumGangsPeds),
+        ReadRuntimeFloatForLog(kPopCycleNumDealersPeds),
+        ReadRuntimeFloatForLog(kPopCyclePercOther),
+        ReadRuntimeFloatForLog(kPopCyclePercCops),
+        ReadRuntimeFloatForLog(kPopCyclePercGangs),
+        ReadRuntimeU32ForLog(kPopCycleCurrentZoneType));
+}
+
+struct PedModelCounter {
+    int32_t modelId;
+    uint32_t count;
+};
+
+void AddPedModelCounter(PedModelCounter* counters, size_t count, int32_t modelId)
+{
+    if (!counters || modelId < 0) {
+        return;
+    }
+
+    for (size_t i = 0; i < count; ++i) {
+        if (counters[i].modelId == modelId) {
+            ++counters[i].count;
+            return;
+        }
+    }
+
+    for (size_t i = 0; i < count; ++i) {
+        if (counters[i].modelId < 0) {
+            counters[i].modelId = modelId;
+            counters[i].count = 1;
+            return;
+        }
+    }
+}
+
+void AppendTopPedModels(char* output, size_t outputSize, PedModelCounter* counters, size_t counterCount)
+{
+    if (!output || outputSize == 0 || !counters) {
+        return;
+    }
+
+    output[0] = '\0';
+    size_t used = 0;
+    bool selected[64]{};
+    const size_t maxCounters = counterCount < 64 ? counterCount : 64;
+    for (size_t rank = 0; rank < 12; ++rank) {
+        size_t best = maxCounters;
+        for (size_t i = 0; i < maxCounters; ++i) {
+            if (selected[i] || counters[i].modelId < 0 || counters[i].count == 0) {
+                continue;
+            }
+            if (best == maxCounters || counters[i].count > counters[best].count) {
+                best = i;
+            }
+        }
+
+        if (best == maxCounters) {
+            break;
+        }
+
+        selected[best] = true;
+        const int written = sprintf_s(output + used,
+            outputSize - used,
+            "%s%d:%u",
+            used ? "," : "",
+            counters[best].modelId,
+            counters[best].count);
+        if (written <= 0) {
+            break;
+        }
+        used += static_cast<size_t>(written);
+        if (used + 16 >= outputSize) {
+            break;
+        }
+    }
+}
+
+bool IsPedRaceAllowedByCurrentZone(uint32_t race, uint8_t zoneRaces, bool hasZoneInfo)
+{
+    if (race == 0) {
+        return true;
+    }
+    if (!hasZoneInfo || race > 4) {
+        return false;
+    }
+    return (zoneRaces & (1u << (race - 1))) != 0;
+}
+
+void AppendCurrentPopcycleGroupRow(char* output, size_t outputSize)
+{
+    if (!output || outputSize == 0) {
+        return;
+    }
+    output[0] = '\0';
+
+    const uint32_t timeIndex = ReadRuntimeU32ForLog(kPopCycleCurrentTimeIndex);
+    const uint32_t timeOfWeek = ReadRuntimeU32ForLog(kPopCycleCurrentTimeOfWeek);
+    const uint32_t zoneType = ReadRuntimeU32ForLog(kPopCycleCurrentZoneType);
+    if (timeIndex >= 12 || timeOfWeek >= 2 || zoneType >= 20) {
+        sprintf_s(output, outputSize, "invalid time=%u week=%u zone=%u", timeIndex, timeOfWeek, zoneType);
+        return;
+    }
+
+    const uintptr_t row = kPopCyclePercTypeGroup +
+        (((static_cast<uintptr_t>(timeIndex) * 2u + timeOfWeek) * 20u + zoneType) * 18u);
+    size_t used = 0;
+    for (uint32_t i = 0; i < 18; ++i) {
+        uint8_t value = 0xFF;
+        SafeReadU8(row + i, &value);
+        const int written = sprintf_s(output + used,
+            outputSize - used,
+            "%s%u",
+            i ? "," : "",
+            static_cast<unsigned>(value));
+        if (written <= 0) {
+            break;
+        }
+        used += static_cast<size_t>(written);
+        if (used + 8 >= outputSize) {
+            break;
+        }
+    }
+}
+
+void LogPopulationStreamingPedSlots(const char* reason, int sampleIndex)
+{
+    uint32_t zoneInfo32 = 0;
+    SafeReadU32(kPopCycleCurrentZoneInfo, &zoneInfo32);
+    const uintptr_t zoneInfo = static_cast<uintptr_t>(zoneInfo32);
+    const bool hasZoneInfo = zoneInfo && IsReadableCommitted(zoneInfo, 0x11);
+
+    uint8_t zoneFlags = 0xFF;
+    uint8_t zoneRaces = 0xFF;
+    if (hasZoneInfo) {
+        SafeReadU8(zoneInfo + 0x0F, &zoneFlags);
+        SafeReadU8(zoneInfo + 0x10, &zoneRaces);
+    }
+
+    uint32_t loadedCount = ReadRuntimeU32ForLog(kStreamingNumPedsLoaded);
+    uint32_t loadedGangs = 0xFFFFFFFFu;
+    SafeReadU32(kStreamingLoadedGangs, &loadedGangs);
+
+    uint32_t activeSlots = 0;
+    uint32_t streamLoadedSlots = 0;
+    uint32_t pedInfoSlots = 0;
+    uint32_t rwSlots = 0;
+    uint32_t refOkSlots = 0;
+    uint32_t raceOkSlots = 0;
+    uint32_t defaultCandidatesFirst3 = 0;
+    uint32_t defaultCandidatesAll = 0;
+    char slots[4096]{};
+    size_t used = 0;
+
+    for (uint32_t i = 0; i < 8; ++i) {
+        uint32_t rawModel = 0xFFFFFFFFu;
+        SafeReadU32(kStreamingPedsLoaded + i * sizeof(uint32_t), &rawModel);
+        const int32_t modelId = static_cast<int32_t>(rawModel);
+        if (modelId < 0) {
+            const int written = sprintf_s(slots + used, sizeof(slots) - used, "%ss%u=-1", used ? "," : "", i);
+            if (written > 0) {
+                used += static_cast<size_t>(written);
+            }
+            continue;
+        }
+
+        ++activeSlots;
+        const uint8_t streamState = GetStreamingLoadState(static_cast<uint32_t>(modelId));
+        const bool streamLoaded = streamState == 1;
+        if (streamLoaded) {
+            ++streamLoadedSlots;
+        }
+
+        uint32_t streamFlags = 0xFFFFFFFFu;
+        uint32_t cdSize = 0xFFFFFFFFu;
+        const uintptr_t streamingEntry = SafeStreamingInfoEntryAddress(static_cast<uint32_t>(modelId));
+        if (streamingEntry) {
+            SafeReadU32(streamingEntry + 0x06, &streamFlags);
+            SafeReadU32(streamingEntry + 0x0C, &cdSize);
+        }
+
+        uint32_t modelInfo = 0;
+        const uintptr_t modelEntry = SafeModelInfoEntryAddress(static_cast<uint32_t>(modelId));
+        if (modelEntry) {
+            SafeReadU32(modelEntry, &modelInfo);
+        }
+        if (!modelInfo && static_cast<uint32_t>(modelId) < kOriginalCModelInfoCount) {
+            SafeReadU32(kOriginalCModelInfoPtrs + static_cast<uintptr_t>(modelId) * sizeof(uintptr_t), &modelInfo);
+        }
+
+        uint32_t vtable = 0;
+        uint32_t refAndTxd = 0xFFFFFFFFu;
+        uint32_t rwObject = 0;
+        uint32_t animType = 0xFFFFFFFFu;
+        uint32_t pedType = 0xFFFFFFFFu;
+        uint32_t statType = 0xFFFFFFFFu;
+        uint32_t carsAndPedFlags = 0xFFFFFFFFu;
+        uint8_t race = 0xFF;
+        if (modelInfo && IsReadableCommitted(modelInfo, 0x44)) {
+            SafeReadU32(modelInfo, &vtable);
+            SafeReadU32(modelInfo + 0x08, &refAndTxd);
+            SafeReadU32(modelInfo + 0x1C, &rwObject);
+            SafeReadU32(modelInfo + 0x24, &animType);
+            SafeReadU32(modelInfo + 0x28, &pedType);
+            SafeReadU32(modelInfo + 0x2C, &statType);
+            SafeReadU32(modelInfo + 0x30, &carsAndPedFlags);
+            SafeReadU8(modelInfo + 0x3A, &race);
+        }
+
+        const bool pedInfo = vtable == kPedModelInfoVtable;
+        const uint32_t refCount = refAndTxd & 0xFFFFu;
+        const bool refOk = refCount == i;
+        const bool raceOk = IsPedRaceAllowedByCurrentZone(race, zoneRaces & 0x0Fu, hasZoneInfo);
+        const bool defaultCandidate = pedInfo && streamLoaded && rwObject && refOk && raceOk;
+
+        if (pedInfo) {
+            ++pedInfoSlots;
+        }
+        if (rwObject) {
+            ++rwSlots;
+        }
+        if (refOk) {
+            ++refOkSlots;
+        }
+        if (raceOk) {
+            ++raceOkSlots;
+        }
+        if (defaultCandidate) {
+            ++defaultCandidatesAll;
+            if (i < 3) {
+                ++defaultCandidatesFirst3;
+            }
+        }
+
+        if (used + 360 < sizeof(slots)) {
+            const int written = sprintf_s(slots + used,
+                sizeof(slots) - used,
+                "%ss%u=m%d/st%u/fl%02X/cd%u/mi%08X/vt%08X/rw%08X/ref%u/ped%u/stat%u/anim%u/cars%04X/race%u/raceOk%d/refOk%d/cand%d",
+                used ? "," : "",
+                i,
+                modelId,
+                static_cast<unsigned>(streamState),
+                static_cast<unsigned>(streamFlags & 0xFFu),
+                cdSize,
+                modelInfo,
+                vtable,
+                rwObject,
+                refCount,
+                pedType,
+                statType,
+                animType,
+                carsAndPedFlags & 0xFFFFu,
+                static_cast<unsigned>(race),
+                raceOk ? 1 : 0,
+                refOk ? 1 : 0,
+                defaultCandidate ? 1 : 0);
+            if (written > 0) {
+                used += static_cast<size_t>(written);
+            }
+        }
+    }
+
+    char groupRow[128]{};
+    AppendCurrentPopcycleGroupRow(groupRow, sizeof(groupRow));
+
+    Log("population streaming peds: reason=%s sample=%d ms_num=%u active=%u loaded=%u pedInfo=%u rw=%u refOk=%u raceOk=%u candFirst3=%u candAll=%u streamZone=%u popZone=%u time=%u week=%u zoneCheats=0x%02X requested=%u threshold=%d zoneInfo=0x%08X zoneFlags=0x%02X zoneRaces=0x%02X loadedGangs=0x%04X groups=%s slots=%s",
+        reason ? reason : "",
+        sampleIndex,
+        loadedCount,
+        activeSlots,
+        streamLoadedSlots,
+        pedInfoSlots,
+        rwSlots,
+        refOkSlots,
+        raceOkSlots,
+        defaultCandidatesFirst3,
+        defaultCandidatesAll,
+        ReadRuntimeU32ForLog(kStreamingCurrentZoneType),
+        ReadRuntimeU32ForLog(kPopCycleCurrentZoneType),
+        ReadRuntimeU32ForLog(kPopCycleCurrentTimeIndex),
+        ReadRuntimeU32ForLog(kPopCycleCurrentTimeOfWeek),
+        ReadZoneStreamingCheatMaskForLog(),
+        ReadRuntimeU32ForLog(kStreamingNumModelsRequested),
+        g_config.streamingBusyThreshold,
+        zoneInfo,
+        static_cast<unsigned>(zoneFlags),
+        static_cast<unsigned>(zoneRaces),
+        loadedGangs & 0xFFFFu,
+        groupRow,
+        slots);
+}
+
+void LogPedPoolModelTypeSummary(const char* reason, int sampleIndex)
+{
+    uint32_t poolValue = 0;
+    if (!SafeReadU32(kOriginalPedPoolPtr, &poolValue) || !poolValue) {
+        Log("population ped summary: reason=%s sample=%d pedPool=0x%08X unavailable",
+            reason ? reason : "",
+            sampleIndex,
+            poolValue);
+        return;
+    }
+
+    uintptr_t objects = 0;
+    uintptr_t byteMap = 0;
+    uint32_t size = 0;
+    uint32_t firstFree = 0xFFFFFFFF;
+    if (!ReadPoolByteMap(poolValue, &objects, &byteMap, &size, &firstFree) ||
+        !objects ||
+        !byteMap ||
+        !IsReadableCommitted(byteMap, static_cast<size_t>(size))) {
+        Log("population ped summary: reason=%s sample=%d pedPool=0x%08X invalid objects=0x%08X byteMap=0x%08X size=%u",
+            reason ? reason : "",
+            sampleIndex,
+            poolValue,
+            objects,
+            byteMap,
+            size);
+        return;
+    }
+
+    uint32_t used = 0;
+    uint32_t readable = 0;
+    uint32_t unreadable = 0;
+    uint32_t typePlayers = 0;
+    uint32_t typeCivMale = 0;
+    uint32_t typeCivFemale = 0;
+    uint32_t typeCops = 0;
+    uint32_t typeGangs = 0;
+    uint32_t typeDealers = 0;
+    uint32_t typeEmergency = 0;
+    uint32_t typeCriminal = 0;
+    uint32_t typeBum = 0;
+    uint32_t typeProstitute = 0;
+    uint32_t typeSpecial = 0;
+    uint32_t typeMission = 0;
+    uint32_t typeOther = 0;
+    uint32_t createdZero = 0;
+    uint32_t createdGame = 0;
+    uint32_t createdMission = 0;
+    uint32_t createdGameMission = 0;
+    uint32_t createdOther = 0;
+    uint32_t alive = 0;
+    uint32_t notAlive = 0;
+    uint32_t positionReadable = 0;
+    uint32_t matrixBacked = 0;
+    uint32_t rwObjectPresent = 0;
+    uint32_t visibleFlagSet = 0;
+    uint32_t removeFromWorldSet = 0;
+    uint32_t dontRenderSet = 0;
+    uint32_t addToPopulationSet = 0;
+    uint32_t fadeOutSet = 0;
+    uint32_t inVehicleSet = 0;
+    uint32_t areaMatch = 0;
+    uint32_t collisionNodePresent = 0;
+    uint32_t movingNodePresent = 0;
+    uint32_t nearAlive40 = 0;
+    uint32_t nearAlive80 = 0;
+    uint32_t nearAlive120 = 0;
+    uint32_t nearRenderable80 = 0;
+    uint32_t nearCiv80 = 0;
+    uint32_t nearGang80 = 0;
+    uint32_t nearMission80 = 0;
+    char sampleSlots[4096]{};
+    size_t sampleSlotTextUsed = 0;
+    uint32_t sampleSlotCount = 0;
+    PedModelCounter modelCounters[64]{};
+    for (size_t i = 0; i < 64; ++i) {
+        modelCounters[i].modelId = -1;
+    }
+
+    const uintptr_t playerPed = ReadFocusedPlayerPed();
+    RuntimeVec3 playerPos{};
+    uintptr_t playerMatrix = 0;
+    bool playerFromMatrix = false;
+    const bool playerPosOk = playerPed != 0 && ReadEntityPosition(playerPed, &playerPos, &playerMatrix, &playerFromMatrix);
+    uint8_t playerArea = 0xFF;
+    if (playerPed) {
+        SafeReadU8(playerPed + kCEntityAreaCodeOffset, &playerArea);
+    }
+    const uint32_t currentAreaRaw = ReadRuntimeU32ForLog(kCGameCurrentArea);
+    const uint8_t currentArea = currentAreaRaw <= 0xFFu ? static_cast<uint8_t>(currentAreaRaw) : 0xFFu;
+
+    __try {
+        const auto* flags = reinterpret_cast<const uint8_t*>(byteMap);
+        for (uint32_t i = 0; i < size; ++i) {
+            if (flags[i] & 0x80) {
+                continue;
+            }
+
+            ++used;
+            const uintptr_t ped = objects + static_cast<uintptr_t>(i) * kPedPoolSlotSize;
+            if (!IsReadableCommitted(ped, 0x5A0)) {
+                ++unreadable;
+                continue;
+            }
+
+            ++readable;
+            const int32_t modelId = ReadExtendedIdFrom16BitField(reinterpret_cast<const void*>(ped + 0x22));
+            AddPedModelCounter(modelCounters, sizeof(modelCounters) / sizeof(modelCounters[0]), modelId);
+
+            uint32_t pedType = 0xFFFFFFFFu;
+            SafeReadU32(ped + kCPedTypeOffset, &pedType);
+            if (pedType <= 3) {
+                ++typePlayers;
+            } else if (pedType == 4) {
+                ++typeCivMale;
+            } else if (pedType == 5) {
+                ++typeCivFemale;
+            } else if (pedType == 6) {
+                ++typeCops;
+            } else if (pedType >= 7 && pedType <= 16) {
+                ++typeGangs;
+            } else if (pedType == 17) {
+                ++typeDealers;
+            } else if (pedType == 18 || pedType == 19) {
+                ++typeEmergency;
+            } else if (pedType == 20) {
+                ++typeCriminal;
+            } else if (pedType == 21) {
+                ++typeBum;
+            } else if (pedType == 22) {
+                ++typeProstitute;
+            } else if (pedType == 23) {
+                ++typeSpecial;
+            } else if (pedType >= 24 && pedType <= 31) {
+                ++typeMission;
+            } else {
+                ++typeOther;
+            }
+
+            uint8_t createdBy = 0;
+            if (SafeReadU8(ped + kCPedCreatedByOffset, &createdBy)) {
+                if (createdBy == 0) {
+                    ++createdZero;
+                } else if (createdBy == 1) {
+                    ++createdGame;
+                } else if (createdBy == 2) {
+                    ++createdMission;
+                } else if (createdBy == 3) {
+                    ++createdGameMission;
+                } else {
+                    ++createdOther;
+                }
+            }
+
+            float health = 0.0f;
+            const bool isAlive = SafeReadF32(ped + kCPedHealthOffset, &health) && health > 0.0f && health < 100000.0f;
+            if (isAlive) {
+                ++alive;
+            } else {
+                ++notAlive;
+            }
+
+            uint32_t entityFlags = 0;
+            uint32_t rwObject = 0;
+            uint32_t physicalFlags = 0;
+            uint32_t collisionNode = 0;
+            uint32_t movingNode = 0;
+            uint32_t pedState = 0xFFFFFFFFu;
+            uint32_t moveState = 0xFFFFFFFFu;
+            uint8_t entityInfo = 0xFF;
+            uint8_t areaCode = 0xFF;
+            uint8_t pedFlags1 = 0;
+            uint8_t pedFlags4 = 0;
+            uint8_t pedFlags8 = 0;
+            uint8_t pedFlags11 = 0;
+            SafeReadU32(ped + kCEntityFlagsOffset, &entityFlags);
+            SafeReadU32(ped + kCEntityRwObjectOffset, &rwObject);
+            SafeReadU32(ped + kCPhysicalFlagsOffset, &physicalFlags);
+            SafeReadU32(ped + kCPhysicalCollisionListOffset, &collisionNode);
+            SafeReadU32(ped + kCPhysicalMovingListOffset, &movingNode);
+            SafeReadU32(ped + kCPedStateOffset, &pedState);
+            SafeReadU32(ped + kCPedMoveStateOffset, &moveState);
+            SafeReadU8(ped + kCEntityInfoOffset, &entityInfo);
+            SafeReadU8(ped + kCEntityAreaCodeOffset, &areaCode);
+            SafeReadU8(ped + kCPedFlagsOffset + 1, &pedFlags1);
+            SafeReadU8(ped + kCPedFlagsOffset + 4, &pedFlags4);
+            SafeReadU8(ped + kCPedFlagsOffset + 8, &pedFlags8);
+            SafeReadU8(ped + kCPedFlagsOffset + 11, &pedFlags11);
+
+            const bool visible = (entityFlags & (1u << 7)) != 0;
+            const bool removeFromWorld = (entityFlags & (1u << 11)) != 0;
+            const bool inVehicle = (pedFlags1 & 0x01u) != 0;
+            const bool fadeOut = (pedFlags4 & 0x08u) != 0;
+            const bool dontRender = (pedFlags8 & 0x02u) != 0;
+            const bool addedToPopulation = (pedFlags8 & 0x04u) != 0;
+            const bool hasBeenRendered = (pedFlags11 & 0x20u) != 0;
+            const bool areaMatches =
+                (currentArea != 0xFFu && areaCode == currentArea) ||
+                (playerArea != 0xFFu && areaCode == playerArea);
+
+            RuntimeVec3 pedPos{};
+            uintptr_t matrix = 0;
+            bool fromMatrix = false;
+            const bool posOk = ReadEntityPosition(ped, &pedPos, &matrix, &fromMatrix);
+            float distance2D2 = -1.0f;
+            const bool hasDistance = playerPosOk && posOk;
+            if (posOk) {
+                ++positionReadable;
+            }
+            if (fromMatrix) {
+                ++matrixBacked;
+            }
+            if (rwObject) {
+                ++rwObjectPresent;
+            }
+            if (visible) {
+                ++visibleFlagSet;
+            }
+            if (removeFromWorld) {
+                ++removeFromWorldSet;
+            }
+            if (dontRender) {
+                ++dontRenderSet;
+            }
+            if (addedToPopulation) {
+                ++addToPopulationSet;
+            }
+            if (fadeOut) {
+                ++fadeOutSet;
+            }
+            if (inVehicle) {
+                ++inVehicleSet;
+            }
+            if (areaMatches) {
+                ++areaMatch;
+            }
+            if (collisionNode) {
+                ++collisionNodePresent;
+            }
+            if (movingNode) {
+                ++movingNodePresent;
+            }
+
+            if (hasDistance) {
+                distance2D2 = DistanceSquared2D(pedPos, playerPos);
+                const bool nonPlayerAlive = isAlive && pedType > 3;
+                if (nonPlayerAlive && distance2D2 <= 40.0f * 40.0f) {
+                    ++nearAlive40;
+                }
+                if (nonPlayerAlive && distance2D2 <= 80.0f * 80.0f) {
+                    ++nearAlive80;
+                    if (visible && rwObject && !dontRender && !removeFromWorld && areaMatches) {
+                        ++nearRenderable80;
+                    }
+                    if (pedType == 4 || pedType == 5) {
+                        ++nearCiv80;
+                    } else if (pedType >= 7 && pedType <= 16) {
+                        ++nearGang80;
+                    } else if (pedType >= 24 && pedType <= 31) {
+                        ++nearMission80;
+                    }
+                }
+                if (nonPlayerAlive && distance2D2 <= 120.0f * 120.0f) {
+                    ++nearAlive120;
+                }
+            }
+
+            if (sampleSlotCount < 16 && sampleSlotTextUsed + 220 < sizeof(sampleSlots)) {
+                const int written = sprintf_s(sampleSlots + sampleSlotTextUsed,
+                    sizeof(sampleSlots) - sampleSlotTextUsed,
+                    "%s%u:m%d/t%u/c%u/h%.0f/st%u/mv%u/a%u/ei%02X/pf%08X/v%d/rw%d/mat%d/add%d/dr%d/fade%d/veh%d/col%d/rend%d/d2%.0f/pos%.1f,%.1f,%.1f",
+                    sampleSlotTextUsed ? "," : "",
+                    i,
+                    modelId,
+                    pedType,
+                    static_cast<unsigned>(createdBy),
+                    health,
+                    pedState,
+                    moveState,
+                    static_cast<unsigned>(areaCode),
+                    static_cast<unsigned>(entityInfo),
+                    physicalFlags,
+                    visible ? 1 : 0,
+                    rwObject ? 1 : 0,
+                    matrix ? 1 : 0,
+                    addedToPopulation ? 1 : 0,
+                    dontRender ? 1 : 0,
+                    fadeOut ? 1 : 0,
+                    inVehicle ? 1 : 0,
+                    collisionNode ? 1 : 0,
+                    hasBeenRendered ? 1 : 0,
+                    distance2D2,
+                    posOk ? pedPos.x : -9999.0f,
+                    posOk ? pedPos.y : -9999.0f,
+                    posOk ? pedPos.z : -9999.0f);
+                if (written > 0) {
+                    sampleSlotTextUsed += static_cast<size_t>(written);
+                    ++sampleSlotCount;
+                }
+            }
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        Log("population ped summary: reason=%s sample=%d pedPool=0x%08X scan exception used=%u readable=%u unreadable=%u",
+            reason ? reason : "",
+            sampleIndex,
+            poolValue,
+            used,
+            readable,
+            unreadable);
+        return;
+    }
+
+    char topModels[256]{};
+    AppendTopPedModels(topModels, sizeof(topModels), modelCounters, sizeof(modelCounters) / sizeof(modelCounters[0]));
+
+    Log("population ped summary: reason=%s sample=%d pool=0x%08X objects=0x%08X size=%u slotSize=0x%X used=%u readable=%u unreadable=%u firstFree=%u type players=%u civMale=%u civFemale=%u cops=%u gangs=%u dealers=%u emergency=%u criminal=%u bum=%u prostitute=%u special=%u mission=%u other=%u created zero=%u game=%u mission=%u gameMission=%u other=%u alive=%u notAlive=%u topModels=%s",
+        reason ? reason : "",
+        sampleIndex,
+        poolValue,
+        objects,
+        size,
+        static_cast<unsigned>(kPedPoolSlotSize),
+        used,
+        readable,
+        unreadable,
+        firstFree,
+        typePlayers,
+        typeCivMale,
+        typeCivFemale,
+        typeCops,
+        typeGangs,
+        typeDealers,
+        typeEmergency,
+        typeCriminal,
+        typeBum,
+        typeProstitute,
+        typeSpecial,
+        typeMission,
+        typeOther,
+        createdZero,
+        createdGame,
+        createdMission,
+        createdGameMission,
+        createdOther,
+        alive,
+        notAlive,
+        topModels);
+    Log("population ped visibility: reason=%s sample=%d player=0x%08X playerPosOk=%d playerPos=%.1f,%.1f,%.1f playerMatrix=0x%08X playerMatrixPos=%d currArea=%u currAreaRaw=0x%08X playerArea=%u pos=%u matrix=%u rw=%u visible=%u removeWorld=%u dontRender=%u addPop=%u fade=%u inVeh=%u areaMatch=%u colNode=%u movingNode=%u nearAlive40=%u nearAlive80=%u nearAlive120=%u nearRenderable80=%u nearCiv80=%u nearGang80=%u nearMission80=%u",
+        reason ? reason : "",
+        sampleIndex,
+        static_cast<unsigned>(playerPed),
+        playerPosOk ? 1 : 0,
+        playerPosOk ? playerPos.x : -9999.0f,
+        playerPosOk ? playerPos.y : -9999.0f,
+        playerPosOk ? playerPos.z : -9999.0f,
+        static_cast<unsigned>(playerMatrix),
+        playerFromMatrix ? 1 : 0,
+        static_cast<unsigned>(currentArea),
+        currentAreaRaw,
+        static_cast<unsigned>(playerArea),
+        positionReadable,
+        matrixBacked,
+        rwObjectPresent,
+        visibleFlagSet,
+        removeFromWorldSet,
+        dontRenderSet,
+        addToPopulationSet,
+        fadeOutSet,
+        inVehicleSet,
+        areaMatch,
+        collisionNodePresent,
+        movingNodePresent,
+        nearAlive40,
+        nearAlive80,
+        nearAlive120,
+        nearRenderable80,
+        nearCiv80,
+        nearGang80,
+        nearMission80);
+    if (sampleSlots[0]) {
+        Log("population ped slots: reason=%s sample=%d %s",
+            reason ? reason : "",
+            sampleIndex,
+            sampleSlots);
+    }
+}
+
+DWORD WINAPI PopulationPoolDiagnosticsThread(void*)
+{
+    if (!g_config.enablePopulationPoolDiagnostics || g_config.populationPoolDiagIterations <= 0) {
+        return 0;
+    }
+
+    Sleep(static_cast<DWORD>(g_config.populationPoolDiagStartDelayMs));
+    bool poolsReady = false;
+    uint32_t pedPool = 0;
+    uint32_t vehiclePool = 0;
+    uint32_t objectPool = 0;
+    uint32_t colModelPool = 0;
+    for (int waitAttempt = 0; waitAttempt < 1800; ++waitAttempt) {
+        if (AreCorePoolsReadyForDeferredReplay(&pedPool, &vehiclePool, &objectPool, &colModelPool)) {
+            poolsReady = true;
+            Log("population diag: core pools ready after waitAttempt=%d ped=0x%08X vehicle=0x%08X object=0x%08X colModel=0x%08X",
+                waitAttempt,
+                pedPool,
+                vehiclePool,
+                objectPool,
+                colModelPool);
+            break;
+        }
+
+        if (waitAttempt == 0 || waitAttempt == 30 || waitAttempt == 120 || (waitAttempt % 300) == 0) {
+            Log("population diag: waiting for core pools waitAttempt=%d ped=0x%08X vehicle=0x%08X object=0x%08X colModel=0x%08X",
+                waitAttempt,
+                pedPool,
+                vehiclePool,
+                objectPool,
+                colModelPool);
+        }
+        Sleep(1000);
+    }
+
+    if (!poolsReady) {
+        Log("population diag: core pools still not ready; sampling null/invalid pointers for diagnostics");
+    }
+
+    for (int i = 0; i < g_config.populationPoolDiagIterations; ++i) {
+        Log("population diag: sample=%d/%d", i + 1, g_config.populationPoolDiagIterations);
+        LogPopulationPoolUsage("Peds", kOriginalPedPoolPtr);
+        LogPopulationPoolUsage("Vehicles", kOriginalVehiclePoolPtr);
+        LogPopulationPoolUsage("Objects", kOriginalObjectPoolPtr);
+        LogPopulationRuntimeState("population-diag", i + 1);
+        LogPopulationStreamingPedSlots("population-diag", i + 1);
+        LogPedPoolModelTypeSummary("population-diag", i + 1);
+        Sleep(static_cast<DWORD>(g_config.populationPoolDiagIntervalMs));
+    }
+    Log("population diag: completed iterations=%d", g_config.populationPoolDiagIterations);
+    return 0;
+}
+
+DWORD WINAPI GangOnlyPopulationGuardThread(void*)
+{
+    if (!g_config.enableGangOnlyPopulationGuard || g_config.gangOnlyPopulationGuardIterations <= 0) {
+        return 0;
+    }
+
+    Sleep(static_cast<DWORD>(g_config.gangOnlyPopulationGuardStartDelayMs));
+
+    bool poolsReady = false;
+    uint32_t pedPool = 0;
+    uint32_t vehiclePool = 0;
+    uint32_t objectPool = 0;
+    uint32_t colModelPool = 0;
+    for (int waitAttempt = 0; waitAttempt < 1800; ++waitAttempt) {
+        if (AreCorePoolsReadyForDeferredReplay(&pedPool, &vehiclePool, &objectPool, &colModelPool)) {
+            poolsReady = true;
+            Log("population guard: core pools ready after waitAttempt=%d ped=0x%08X vehicle=0x%08X object=0x%08X colModel=0x%08X",
+                waitAttempt,
+                pedPool,
+                vehiclePool,
+                objectPool,
+                colModelPool);
+            break;
+        }
+
+        if (waitAttempt == 0 || waitAttempt == 30 || waitAttempt == 120 || (waitAttempt % 300) == 0) {
+            Log("population guard: waiting for core pools waitAttempt=%d ped=0x%08X vehicle=0x%08X object=0x%08X colModel=0x%08X",
+                waitAttempt,
+                pedPool,
+                vehiclePool,
+                objectPool,
+                colModelPool);
+        }
+        Sleep(1000);
+    }
+
+    if (!poolsReady) {
+        Log("population guard: core pools still not ready; continuing runtime flag watch");
+    }
+
+    int lastOnlyGang = -2;
+    int lastCheatGangLand = -2;
+    uint32_t lastZoneStreamingMask = 0xFFFFFFFFu;
+    int clearCount = 0;
+
+    for (int i = 0; i < g_config.gangOnlyPopulationGuardIterations; ++i) {
+        const int sample = i + 1;
+        const int onlyGang = ReadRuntimeByteForLog(kPopulationOnlyCreateRandomGangMembers);
+        const int cheatGangLand = ReadRuntimeByteForLog(kCheatsActive + kCheatGangsControlStreets);
+        const uint32_t zoneStreamingMask = ReadZoneStreamingCheatMaskForLog();
+        const uint32_t msNumPedsLoaded = ReadRuntimeU32ForLog(kStreamingNumPedsLoaded);
+        const uint32_t streamZone = ReadRuntimeU32ForLog(kStreamingCurrentZoneType);
+        const uint32_t popZone = ReadRuntimeU32ForLog(kPopCycleCurrentZoneType);
+        const bool changed = onlyGang != lastOnlyGang || cheatGangLand != lastCheatGangLand || zoneStreamingMask != lastZoneStreamingMask;
+        const bool shouldClearOnlyGang = onlyGang > 0;
+        const bool shouldClearCheat = g_config.gangOnlyPopulationGuardClearCheatFlag && cheatGangLand > 0;
+        const bool shouldClearZoneCheats =
+            g_config.gangOnlyPopulationGuardClearCheatFlag &&
+            zoneStreamingMask != 0 &&
+            msNumPedsLoaded == 0 &&
+            streamZone == 0xFFFFFFFFu &&
+            popZone != 0xFFFFFFFFu;
+
+        if (sample == 1 || sample <= 3 || changed || shouldClearOnlyGang || shouldClearCheat || shouldClearZoneCheats || (sample % 15) == 0) {
+            LogPopulationRuntimeState("gang-only-guard", sample);
+        }
+
+        if (g_config.enablePopulationPoolDiagnostics &&
+            (sample == 1 || changed || shouldClearOnlyGang || shouldClearCheat || shouldClearZoneCheats || (sample % 15) == 0)) {
+            LogPopulationStreamingPedSlots("gang-only-guard", sample);
+            LogPedPoolModelTypeSummary("gang-only-guard", sample);
+        }
+
+        if (shouldClearOnlyGang || shouldClearCheat || shouldClearZoneCheats) {
+            bool clearedOnlyGang = false;
+            bool clearedCheat = false;
+            bool clearedZoneCheats = false;
+            const uint8_t zero = 0;
+            if (shouldClearOnlyGang) {
+                clearedOnlyGang = WriteBytesWithProtect(kPopulationOnlyCreateRandomGangMembers, &zero, sizeof(zero));
+            }
+            if (shouldClearCheat) {
+                clearedCheat = WriteBytesWithProtect(kCheatsActive + kCheatGangsControlStreets, &zero, sizeof(zero));
+            }
+            if (shouldClearZoneCheats) {
+                clearedZoneCheats = ClearZoneStreamingCheatsForMask(zoneStreamingMask);
+            }
+            ++clearCount;
+            Log("population guard: cleared stuck population state sample=%d clearCount=%d beforeOnlyGang=%d beforeCheatGangLand=%d beforeZoneCheats=0x%02X msPeds=%u streamZone=%u popZone=%u clearedOnlyGang=%d clearedCheatGangLand=%d clearedZoneCheats=%d",
+                sample,
+                clearCount,
+                onlyGang,
+                cheatGangLand,
+                zoneStreamingMask,
+                msNumPedsLoaded,
+                streamZone,
+                popZone,
+                clearedOnlyGang ? 1 : 0,
+                clearedCheat ? 1 : 0,
+                clearedZoneCheats ? 1 : 0);
+            LogPopulationRuntimeState("gang-only-guard-after-clear", sample);
+            if (g_config.enablePopulationPoolDiagnostics) {
+                LogPopulationStreamingPedSlots("gang-only-guard-after-clear", sample);
+                LogPedPoolModelTypeSummary("gang-only-guard-after-clear", sample);
+            }
+        }
+
+        lastOnlyGang = ReadRuntimeByteForLog(kPopulationOnlyCreateRandomGangMembers);
+        lastCheatGangLand = ReadRuntimeByteForLog(kCheatsActive + kCheatGangsControlStreets);
+        lastZoneStreamingMask = ReadZoneStreamingCheatMaskForLog();
+        Sleep(static_cast<DWORD>(g_config.gangOnlyPopulationGuardIntervalMs));
+    }
+
+    Log("population guard: completed iterations=%d clearCount=%d",
+        g_config.gangOnlyPopulationGuardIterations,
+        clearCount);
+    return 0;
+}
+
+void LogOneStreamingPedFunctionEntry(const char* reason, const char* label, uintptr_t address)
+{
+    uint8_t bytes[8]{};
+    bool readable = false;
+    if (IsReadableCommitted(address, sizeof(bytes))) {
+        __try {
+            std::memcpy(bytes, reinterpret_cast<const void*>(address), sizeof(bytes));
+            readable = true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) {
+            readable = false;
+        }
+    }
+
+    if (!readable) {
+        Log("ped zone function: reason=%s label=%s address=0x%08X unreadable",
+            reason ? reason : "",
+            label ? label : "",
+            address);
+        return;
+    }
+
+    uintptr_t target = 0;
+    char targetModule[MAX_PATH]{};
+    uintptr_t targetModuleBase = 0;
+    if (bytes[0] == 0xE8 || bytes[0] == 0xE9) {
+        target = DecodeRel32JumpTarget(address);
+        if (target) {
+            targetModuleBase = ModuleBaseFromAddress(target, targetModule, sizeof(targetModule));
+        }
+    }
+
+    Log("ped zone function: reason=%s label=%s address=0x%08X bytes=%02X %02X %02X %02X %02X %02X %02X %02X first=%s target=0x%08X targetModule=%s+0x%X",
+        reason ? reason : "",
+        label ? label : "",
+        address,
+        bytes[0],
+        bytes[1],
+        bytes[2],
+        bytes[3],
+        bytes[4],
+        bytes[5],
+        bytes[6],
+        bytes[7],
+        bytes[0] == 0xC3 ? "ret" : (bytes[0] == 0xE9 ? "jmp" : (bytes[0] == 0xE8 ? "call" : "code")),
+        target,
+        target ? targetModule : "",
+        target && targetModuleBase ? static_cast<unsigned>(target - targetModuleBase) : 0);
+}
+
+void LogStreamingPedFunctionEntryDiagnostics(const char* reason)
+{
+    LogOneStreamingPedFunctionEntry(reason, "CStreaming::StreamZoneModels", kCStreamingStreamZoneModels);
+    LogOneStreamingPedFunctionEntry(reason, "CStreaming::StreamZoneModels_Gangs", kCStreamingStreamZoneModelsGangs);
+    LogOneStreamingPedFunctionEntry(reason, "CStreaming::StreamVehiclesAndPeds_Always", kCStreamingStreamVehiclesAndPedsAlways);
+    LogOneStreamingPedFunctionEntry(reason, "CStreaming::StreamVehiclesAndPeds", kCStreamingStreamVehiclesAndPeds);
+    LogOneStreamingPedFunctionEntry(reason, "CStreaming::Update", kCStreamingUpdate);
+    LogOneStreamingPedFunctionEntry(reason, "CStreaming::IsVeryBusy", kCStreamingIsVeryBusy);
+}
+
+DWORD WINAPI PedStreamingZoneRepairThread(void*)
+{
+    if (!g_config.enablePedStreamingZoneRepair || g_config.pedStreamingZoneRepairIterations <= 0) {
+        return 0;
+    }
+
+    Sleep(static_cast<DWORD>(g_config.pedStreamingZoneRepairStartDelayMs));
+
+    bool poolsReady = false;
+    uint32_t pedPool = 0;
+    uint32_t vehiclePool = 0;
+    uint32_t objectPool = 0;
+    uint32_t colModelPool = 0;
+    for (int waitAttempt = 0; waitAttempt < 1800; ++waitAttempt) {
+        if (AreCorePoolsReadyForDeferredReplay(&pedPool, &vehiclePool, &objectPool, &colModelPool)) {
+            poolsReady = true;
+            Log("ped zone repair: core pools ready after waitAttempt=%d ped=0x%08X vehicle=0x%08X object=0x%08X colModel=0x%08X",
+                waitAttempt,
+                pedPool,
+                vehiclePool,
+                objectPool,
+                colModelPool);
+            break;
+        }
+
+        if (waitAttempt == 0 || waitAttempt == 30 || waitAttempt == 120 || (waitAttempt % 300) == 0) {
+            Log("ped zone repair: waiting for core pools waitAttempt=%d ped=0x%08X vehicle=0x%08X object=0x%08X colModel=0x%08X",
+                waitAttempt,
+                pedPool,
+                vehiclePool,
+                objectPool,
+                colModelPool);
+        }
+        Sleep(1000);
+    }
+
+    if (!poolsReady) {
+        Log("ped zone repair: core pools still not ready; continuing with guarded runtime checks");
+    }
+
+    LogStreamingPedFunctionEntryDiagnostics("ped-zone-repair-start");
+
+    int callCount = 0;
+    int triggerLogCount = 0;
+    int skippedRetLogs = 0;
+    bool loggedEntryAfterFailure = false;
+
+    for (int i = 0; i < g_config.pedStreamingZoneRepairIterations; ++i) {
+        const int sample = i + 1;
+        const uint32_t streamZone = ReadRuntimeU32ForLog(kStreamingCurrentZoneType);
+        const uint32_t popZone = ReadRuntimeU32ForLog(kPopCycleCurrentZoneType);
+        const uint32_t msPeds = ReadRuntimeU32ForLog(kStreamingNumPedsLoaded);
+        const uint32_t zoneInfo = ReadRuntimeU32ForLog(kPopCycleCurrentZoneInfo);
+        const uint32_t requested = ReadRuntimeU32ForLog(kStreamingNumModelsRequested);
+        const uint32_t priorityReq = ReadRuntimeU32ForLog(kStreamingNumPriorityRequests);
+        const int loadingPriority = ReadRuntimeByteForLog(kRendererLoadingPriority);
+        const int disableStreaming = ReadRuntimeByteForLog(kStreamingDisableStreaming);
+        const int cutsceneProcessing = ReadRuntimeByteForLog(kCCutsceneMgrCutsceneProcessing);
+        const int replayMode = ReadRuntimeByteForLog(kCReplayMode);
+        const uint32_t zoneCheats = ReadZoneStreamingCheatMaskForLog();
+        const uint32_t currentAreaRaw = ReadRuntimeU32ForLog(kCGameCurrentArea);
+        const uintptr_t playerPed = ReadFocusedPlayerPed();
+        RuntimeVec3 playerPos{};
+        uintptr_t playerMatrix = 0;
+        bool playerFromMatrix = false;
+        const bool playerPosOk = playerPed != 0 && ReadEntityPosition(playerPed, &playerPos, &playerMatrix, &playerFromMatrix);
+
+        uint8_t firstByte = 0;
+        const bool entryReadable = SafeReadU8(kCStreamingStreamZoneModels, &firstByte);
+        const bool entryRet = entryReadable && firstByte == 0xC3;
+        const bool shouldTry =
+            g_config.pedStreamingZoneRepairCallOriginal &&
+            callCount < g_config.pedStreamingZoneRepairMaxCalls &&
+            popZone != 0xFFFFFFFFu &&
+            streamZone == 0xFFFFFFFFu &&
+            msPeds == 0 &&
+            zoneInfo != 0 &&
+            zoneCheats == 0 &&
+            requested <= static_cast<uint32_t>(g_config.streamingBusyThreshold) &&
+            priorityReq == 0 &&
+            loadingPriority == 0 &&
+            disableStreaming == 0 &&
+            cutsceneProcessing == 0 &&
+            replayMode != 1 &&
+            currentAreaRaw == 0 &&
+            playerPosOk &&
+            entryReadable &&
+            !entryRet;
+
+        const bool shouldLog =
+            triggerLogCount < g_config.pedStreamingZoneRepairMaxLogs &&
+            (sample == 1 || sample <= 3 || shouldTry || (sample % 15) == 0 ||
+             (popZone != 0xFFFFFFFFu && streamZone == 0xFFFFFFFFu && msPeds == 0));
+
+        if (shouldLog) {
+            ++triggerLogCount;
+            Log("ped zone repair: sample=%d/%d shouldTry=%d calls=%d streamZone=%u popZone=%u msPeds=%u zoneInfo=0x%08X zoneCheats=0x%02X requested=%u priorityReq=%u loadingPriority=%d disableStreaming=%d cutscene=%d replayMode=%d currArea=0x%08X player=0x%08X playerPosOk=%d playerPos=%.1f,%.1f,%.1f playerMatrix=0x%08X matrixPos=%d entryReadable=%d entryByte=0x%02X",
+                sample,
+                g_config.pedStreamingZoneRepairIterations,
+                shouldTry ? 1 : 0,
+                callCount,
+                streamZone,
+                popZone,
+                msPeds,
+                zoneInfo,
+                zoneCheats,
+                requested,
+                priorityReq,
+                loadingPriority,
+                disableStreaming,
+                cutsceneProcessing,
+                replayMode,
+                currentAreaRaw,
+                static_cast<unsigned>(playerPed),
+                playerPosOk ? 1 : 0,
+                playerPosOk ? playerPos.x : -9999.0f,
+                playerPosOk ? playerPos.y : -9999.0f,
+                playerPosOk ? playerPos.z : -9999.0f,
+                static_cast<unsigned>(playerMatrix),
+                playerFromMatrix ? 1 : 0,
+                entryReadable ? 1 : 0,
+                entryReadable ? static_cast<unsigned>(firstByte) : 0xFFu);
+        }
+
+        if (entryRet && skippedRetLogs < 4) {
+            ++skippedRetLogs;
+            Log("ped zone repair: StreamZoneModels entry is RET; not calling original sample=%d", sample);
+            LogStreamingPedFunctionEntryDiagnostics("ped-zone-repair-entry-ret");
+        }
+
+        if (shouldTry) {
+            const uint32_t beforeStreamZone = streamZone;
+            const uint32_t beforeMsPeds = msPeds;
+            bool callOk = false;
+            using StreamZoneModelsFn = void(__cdecl*)(const RuntimeVec3*);
+            auto streamZoneModels = reinterpret_cast<StreamZoneModelsFn>(kCStreamingStreamZoneModels);
+
+            __try {
+                streamZoneModels(&playerPos);
+                callOk = true;
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER) {
+                callOk = false;
+            }
+
+            ++callCount;
+            const uint32_t afterStreamZone = ReadRuntimeU32ForLog(kStreamingCurrentZoneType);
+            const uint32_t afterMsPeds = ReadRuntimeU32ForLog(kStreamingNumPedsLoaded);
+            Log("ped zone repair: called StreamZoneModels sample=%d call=%d ok=%d before streamZone=%u msPeds=%u after streamZone=%u msPeds=%u popZone=%u playerPos=%.1f,%.1f,%.1f",
+                sample,
+                callCount,
+                callOk ? 1 : 0,
+                beforeStreamZone,
+                beforeMsPeds,
+                afterStreamZone,
+                afterMsPeds,
+                popZone,
+                playerPos.x,
+                playerPos.y,
+                playerPos.z);
+
+            if (g_config.enablePopulationPoolDiagnostics ||
+                triggerLogCount < g_config.pedStreamingZoneRepairMaxLogs ||
+                afterMsPeds == 0 ||
+                afterStreamZone == 0xFFFFFFFFu) {
+                LogPopulationStreamingPedSlots("ped-zone-repair-after", sample);
+            }
+
+            if (!callOk && !loggedEntryAfterFailure) {
+                loggedEntryAfterFailure = true;
+                LogStreamingPedFunctionEntryDiagnostics("ped-zone-repair-call-exception");
+            }
+        }
+
+        Sleep(static_cast<DWORD>(g_config.pedStreamingZoneRepairIntervalMs));
+    }
+
+    Log("ped zone repair: completed iterations=%d calls=%d logs=%d",
+        g_config.pedStreamingZoneRepairIterations,
+        callCount,
+        triggerLogCount);
+    return 0;
 }
 
 uint32_t ReadIniU32(const char* key, uint32_t defaultValue)
@@ -3360,6 +6102,47 @@ extern "C" void __stdcall Bridge_FillFallbackBoundRect(uintptr_t entity, BridgeR
             outRect->top);
         if (modelId < kOriginalCModelInfoCount) {
             DumpModelContext(modelId);
+        }
+    }
+}
+
+extern "C" void __stdcall Bridge_LogInvalidShouldModelBeStreamedColModel(uintptr_t entity, uintptr_t modelInfo, uintptr_t colModel, uintptr_t stack)
+{
+    int32_t modelId = -1;
+    if (IsReadableCommitted(entity + 0x22, sizeof(uint16_t))) {
+        modelId = ReadExtendedIdFrom16BitField(reinterpret_cast<const void*>(entity + 0x22));
+    }
+
+    static LONG invalidCount = 0;
+    const LONG count = InterlockedIncrement(&invalidCount);
+    if (count <= 64) {
+        float x = 0.0f;
+        float y = 0.0f;
+        float z = 0.0f;
+        if (IsReadableCommitted(entity + 0x04, sizeof(float) * 3)) {
+            __try {
+                x = *reinterpret_cast<const float*>(entity + 0x04);
+                y = *reinterpret_cast<const float*>(entity + 0x08);
+                z = *reinterpret_cast<const float*>(entity + 0x0C);
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER) {
+                x = 0.0f;
+                y = 0.0f;
+                z = 0.0f;
+            }
+        }
+
+        Log("should stream guard: skipped model=%u entity=0x%08X modelInfo=0x%08X colModel=0x%08X stack=0x%08X pos=(%.3f, %.3f, %.3f)",
+            modelId >= 0 ? static_cast<uint32_t>(modelId) : 0xFFFFFFFFu,
+            entity,
+            modelInfo,
+            colModel,
+            stack,
+            x,
+            y,
+            z);
+        if (count <= 8 && modelId >= 0 && modelId < static_cast<int32_t>(kOriginalCModelInfoCount)) {
+            DumpModelContext(static_cast<uint32_t>(modelId));
         }
     }
 }
@@ -4117,10 +6900,20 @@ extern "C" void __stdcall Bridge_CallCleoDispatchTargetSafely(uintptr_t target, 
     }
 
     if (target == kCPoolsInitialise) {
-        Log("CLEO+ dispatch guard: blocked invalid dispatch target=CPools::Initialise object=0x%08X",
-            dispatchObject);
-        EnsureLazyCoreCPoolsReady("blocked CLEO+ dispatch target CPools::Initialise");
+        Log("CLEO+ dispatch guard: blocked invalid dispatch target=CPools::Initialise object=0x%08X batchLazyCPools=%d lazyPoolRecovery=%d",
+            dispatchObject,
+            g_config.enableBatchLazyCPoolInitialise ? 1 : 0,
+            g_config.enableCleoDispatchLazyPoolRecovery ? 1 : 0);
         ClearCleoPlusScriptEvents("invalid dispatch target CPools::Initialise");
+        if (g_config.enableCleoDispatchLazyPoolRecovery) {
+            if (g_config.enableBatchLazyCPoolInitialise) {
+                EnsureBatchLazyCPoolsInitialised("blocked CLEO+ dispatch target CPools::Initialise", true);
+            } else {
+                EnsureLazyCoreCPoolsReady("blocked CLEO+ dispatch target CPools::Initialise");
+            }
+        } else {
+            Log("CLEO+ dispatch guard: cleared stale CPools::Initialise dispatch without lazy pool recovery");
+        }
         return;
     }
 
@@ -4386,13 +7179,97 @@ bool LooksLikeNeutralizedAnimAssociation(uintptr_t association)
     }
 
     constexpr uint16_t kAnimationReferenceBlock = 0x4000;
+    constexpr uint16_t kAnimationBlendAutoRemove = 0x0004;
     return numBlendNodes == 0 &&
         blendNodes == 0 &&
         blendAmount == 0.0f &&
-        blendDelta == 0.0f &&
+        blendDelta <= 0.0f &&
         speed == 0.0f &&
         timeStep == 0.0f &&
-        flags == kAnimationReferenceBlock;
+        ((flags & kAnimationReferenceBlock) == kAnimationReferenceBlock ||
+            (flags & kAnimationBlendAutoRemove) == kAnimationBlendAutoRemove);
+}
+
+extern "C" bool __stdcall Bridge_ShouldBlockGroupBlendAnimation(uint32_t groupId, uint32_t animId)
+{
+    static LONG logCount = 0;
+
+    constexpr uintptr_t kAnimAssocGroupsPtr = 0x00B4EA34;
+    constexpr uintptr_t kNumAnimAssocDefinitions = 0x00B4EA28;
+    constexpr size_t kAssocGroupSize = 0x14;
+    constexpr size_t kStaticAssocSize = 0x14;
+
+    if (!IsReadableCommitted(kAnimAssocGroupsPtr, sizeof(uintptr_t)) ||
+        !IsReadableCommitted(kNumAnimAssocDefinitions, sizeof(uint32_t))) {
+        return false;
+    }
+
+    uintptr_t groups = 0;
+    uint32_t groupCount = 0;
+    __try {
+        groups = *reinterpret_cast<const uintptr_t*>(kAnimAssocGroupsPtr);
+        groupCount = *reinterpret_cast<const uint32_t*>(kNumAnimAssocDefinitions);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+
+    if (!groups || groupId >= groupCount || !IsReadableCommitted(groups + groupId * kAssocGroupSize, kAssocGroupSize)) {
+        return false;
+    }
+
+    uintptr_t group = groups + groupId * kAssocGroupSize;
+    uintptr_t associations = 0;
+    uint32_t animCount = 0;
+    uint32_t idOffset = 0;
+    __try {
+        associations = *reinterpret_cast<const uintptr_t*>(group + 0x04);
+        animCount = *reinterpret_cast<const uint32_t*>(group + 0x08);
+        idOffset = *reinterpret_cast<const uint32_t*>(group + 0x0C);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+
+    if (!associations || animId < idOffset || animId - idOffset >= animCount) {
+        return false;
+    }
+
+    const uintptr_t staticAssociation = associations + static_cast<uintptr_t>(animId - idOffset) * kStaticAssocSize;
+    if (Bridge_IsValidStaticAssociation(staticAssociation)) {
+        return false;
+    }
+
+    uint16_t numBlendNodes = 0;
+    uint16_t flags = 0;
+    uint32_t blendSeqs = 0;
+    uint32_t blendHier = 0;
+    if (IsReadableCommitted(staticAssociation, kStaticAssocSize)) {
+        __try {
+            numBlendNodes = *reinterpret_cast<const uint16_t*>(staticAssociation + 0x04);
+            flags = *reinterpret_cast<const uint16_t*>(staticAssociation + 0x0A);
+            blendSeqs = *reinterpret_cast<const uint32_t*>(staticAssociation + 0x0C);
+            blendHier = *reinterpret_cast<const uint32_t*>(staticAssociation + 0x10);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) {
+        }
+    }
+
+    const LONG count = InterlockedIncrement(&logCount);
+    if (count <= 16) {
+        Log("anim blend guard: blocked invalid target group=%u animId=%u offset=%u count=%u static=0x%08X nodes=%u flags=0x%04X seqs=0x%08X hier=0x%08X",
+            groupId,
+            animId,
+            idOffset,
+            animCount,
+            staticAssociation,
+            numBlendNodes,
+            flags,
+            blendSeqs,
+            blendHier);
+    }
+
+    return true;
 }
 
 extern "C" void __stdcall Bridge_RepairInvalidStaticAssociation(uintptr_t runtimeAssociation, uintptr_t staticAssociation)
@@ -4421,9 +7298,11 @@ extern "C" void __stdcall Bridge_RepairInvalidStaticAssociation(uintptr_t runtim
     }
 
     const uintptr_t fallbackHier = Bridge_IsValidAnimHierarchy(g_lastValidAnimHierarchy) ? g_lastValidAnimHierarchy : 0;
+    constexpr uint16_t kAnimationBlendAutoRemove = 0x0004;
     constexpr uint16_t kAnimationReferenceBlock = 0x4000;
     constexpr float kZeroBlend = 0.0f;
-    const uint16_t neutralizedFlags = kAnimationReferenceBlock;
+    constexpr float kFadeOutNow = -1.0f;
+    const uint16_t neutralizedFlags = fallbackHier ? kAnimationBlendAutoRemove : static_cast<uint16_t>(kAnimationBlendAutoRemove | kAnimationReferenceBlock);
 
     if (IsReadableCommitted(runtimeAssociation, 0x3C)) {
         __try {
@@ -4432,7 +7311,7 @@ extern "C" void __stdcall Bridge_RepairInvalidStaticAssociation(uintptr_t runtim
             *reinterpret_cast<uint32_t*>(runtimeAssociation + 0x10) = 0;                 // m_BlendNodes
             *reinterpret_cast<uint32_t*>(runtimeAssociation + 0x14) = static_cast<uint32_t>(fallbackHier);
             *reinterpret_cast<float*>(runtimeAssociation + 0x18) = kZeroBlend;           // m_BlendAmount
-            *reinterpret_cast<float*>(runtimeAssociation + 0x1C) = 0.0f;                 // m_BlendDelta
+            *reinterpret_cast<float*>(runtimeAssociation + 0x1C) = kFadeOutNow;          // m_BlendDelta
             *reinterpret_cast<float*>(runtimeAssociation + 0x20) = 0.0f;                 // m_CurrentTime
             *reinterpret_cast<float*>(runtimeAssociation + 0x24) = 0.0f;                 // m_Speed
             *reinterpret_cast<float*>(runtimeAssociation + 0x28) = 0.0f;                 // m_TimeStep
@@ -4515,18 +7394,35 @@ extern "C" bool __stdcall Bridge_PrepareAnimAssociationUpdate(uintptr_t associat
         prev = 0;
     }
 
+    constexpr uint16_t kAnimationBlendAutoRemove = 0x0004;
+    constexpr float kFadeOutNow = -1.0f;
+    bool patchedAutoRemove = false;
+    if (IsWritableCommitted(association + 0x1C, sizeof(float)) &&
+        IsWritableCommitted(association + 0x2E, sizeof(uint16_t))) {
+        __try {
+            *reinterpret_cast<float*>(association + 0x18) = 0.0f;
+            *reinterpret_cast<float*>(association + 0x1C) = kFadeOutNow;
+            *reinterpret_cast<uint16_t*>(association + 0x2E) = static_cast<uint16_t>(flags | kAnimationBlendAutoRemove);
+            patchedAutoRemove = true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) {
+        }
+    }
+    ConsumeNeutralizedAnimAssociation(association);
+
     const LONG count = InterlockedIncrement(&logCount);
     if (count <= 8) {
-        Log("anim assoc guard: skipped neutralized association assoc=0x%08X nodes=%u nodePtr=0x%08X hier=0x%08X flags=0x%04X next=0x%08X prev=0x%08X",
+        Log("anim assoc guard: auto-removing neutralized association assoc=0x%08X nodes=%u nodePtr=0x%08X hier=0x%08X flags=0x%04X patched=%u next=0x%08X prev=0x%08X",
             association,
             numBlendNodes,
             blendNodes,
             blendHier,
             flags,
+            patchedAutoRemove ? 1 : 0,
             next,
             prev);
     }
-    return false;
+    return true;
 }
 
 extern "C" bool __stdcall Bridge_PrepareAnimFrameUpdateData(uintptr_t updateData)
@@ -4624,6 +7520,147 @@ extern "C" bool __stdcall Bridge_PrepareAnimFrameUpdateData(uintptr_t updateData
     }
 
     return true;
+}
+
+extern "C" bool __stdcall Bridge_ShouldSkipRpAnimBlendClumpInit(uintptr_t clump, uintptr_t returnAddress, uintptr_t stack)
+{
+    uint32_t pluginOffset = 0;
+    uint32_t firstLink = 0;
+    uint32_t frame = 0;
+    uint32_t firstAtomic = 0;
+    uint32_t geometry = 0;
+    const uintptr_t sentinel = clump + 0x08;
+
+    bool valid = clump >= 0x10000 &&
+        IsReadableCommitted(clump, 0x20) &&
+        SafeReadU32(kRwClumpAnimPluginOffset, &pluginOffset) &&
+        pluginOffset > 0 &&
+        pluginOffset < 0x1000 &&
+        IsWritableCommitted(clump + pluginOffset, sizeof(uintptr_t)) &&
+        SafeReadU32(clump + 0x08, &firstLink) &&
+        firstLink != 0 &&
+        SafeReadU32(clump + 0x04, &frame) &&
+        frame >= 0x10000 &&
+        IsReadableCommitted(frame, 0x44);
+
+    if (valid && firstLink == sentinel) {
+        return false;
+    } else if (valid) {
+        uint32_t nextLink = 0;
+        const uintptr_t atomic = firstLink >= 0x40 ? firstLink - 0x40 : 0;
+        valid = firstLink >= 0x10000 &&
+            IsReadableCommitted(firstLink, 0x08) &&
+            SafeReadU32(firstLink, &nextLink) &&
+            atomic >= 0x10000 &&
+            IsReadableCommitted(atomic, 0x1C) &&
+            SafeReadU32(atomic + 0x18, &geometry) &&
+            geometry >= 0x10000 &&
+            IsReadableCommitted(geometry, 0x20) &&
+            (nextLink == sentinel || IsReadableCommitted(nextLink, sizeof(uintptr_t)));
+        firstAtomic = static_cast<uint32_t>(atomic);
+    }
+
+    if (valid) {
+        return false;
+    }
+
+    const LONG count = InterlockedIncrement(&g_rpAnimBlendClumpInitGuardLogs);
+    if (count <= 32) {
+        char returnModule[MAX_PATH]{};
+        const uintptr_t returnBase = ModuleBaseFromAddress(returnAddress, returnModule, sizeof(returnModule));
+        Log("rp anim clump init guard: skipped clump=0x%08X pluginOffset=0x%08X firstLink=0x%08X sentinel=0x%08X firstAtomic=0x%08X geometry=0x%08X frame=0x%08X return=0x%08X (%s+0x%X) stack=0x%08X",
+            clump,
+            pluginOffset,
+            firstLink,
+            sentinel,
+            firstAtomic,
+            geometry,
+            frame,
+            returnAddress,
+            returnModule,
+            returnBase ? returnAddress - returnBase : 0,
+            stack);
+        LogMemoryRegion("rp-anim-clump", clump);
+        if (clump >= 0x10000) {
+            LogDwords("rp-anim-clump-dwords", clump, 8);
+        }
+        if (firstLink >= 0x10000) {
+            LogDwords("rp-anim-clump-link", firstLink, 4);
+        }
+        if (firstAtomic >= 0x10000) {
+            LogDwords("rp-anim-first-atomic", firstAtomic, 8);
+        }
+        if (stack) {
+            LogStackModules(stack);
+        }
+    }
+
+    return true;
+}
+
+extern "C" bool __stdcall Bridge_IsSafeRpClumpForAllAtomicsCall(
+    uintptr_t clump,
+    uintptr_t callback,
+    uintptr_t data,
+    uintptr_t returnAddress,
+    uintptr_t stack)
+{
+    const uintptr_t sentinel = clump + 0x08;
+    uint32_t firstLink = 0;
+    bool valid = clump >= 0x10000 &&
+        IsReadableCommitted(clump, 0x0C) &&
+        SafeReadU32(clump + 0x08, &firstLink) &&
+        firstLink != 0;
+
+    if (valid && firstLink == sentinel) {
+        return true;
+    }
+
+    if (valid) {
+        uint32_t nextLink = 0;
+        valid = callback >= 0x10000 &&
+            IsExecutableCommitted(callback) &&
+            firstLink >= 0x10000 &&
+            IsReadableCommitted(firstLink, sizeof(uintptr_t)) &&
+            SafeReadU32(firstLink, &nextLink) &&
+            nextLink != 0 &&
+            (nextLink == sentinel || IsReadableCommitted(nextLink, sizeof(uintptr_t)));
+    }
+
+    if (valid) {
+        return true;
+    }
+
+    const LONG count = InterlockedIncrement(&g_rwClumpForAllAtomicsGuardLogs);
+    if (count <= 32) {
+        char returnModule[MAX_PATH]{};
+        const uintptr_t returnBase = ModuleBaseFromAddress(returnAddress, returnModule, sizeof(returnModule));
+        char callbackModule[MAX_PATH]{};
+        const uintptr_t callbackBase = ModuleBaseFromAddress(callback, callbackModule, sizeof(callbackModule));
+
+        Log("rw clump guard: blocked RpClumpForAllAtomics clump=0x%08X callback=0x%08X data=0x%08X firstLink=0x%08X sentinel=0x%08X return=0x%08X (%s+0x%X) callbackModule=%s+0x%X stack=0x%08X",
+            clump,
+            callback,
+            data,
+            firstLink,
+            sentinel,
+            returnAddress,
+            returnModule,
+            returnBase ? returnAddress - returnBase : 0,
+            callbackModule,
+            callbackBase ? callback - callbackBase : 0,
+            stack);
+        LogMemoryRegion("rw-clump", clump);
+        LogMemoryRegion("rw-clump-callback", callback);
+        if (clump >= 0x10000) {
+            LogDwords("rw-clump-dwords", clump, 8);
+        }
+        if (stack) {
+            LogStackModules(stack);
+        }
+    }
+
+    return false;
 }
 
 bool CopyMemoryWithProtect(uintptr_t destination, uintptr_t source, size_t size)
@@ -4869,7 +7906,7 @@ uintptr_t DecodeRel32JumpTarget(uintptr_t address)
         return 0;
     }
 
-    if (bytes[0] != 0xE9) {
+    if (bytes[0] != 0xE8 && bytes[0] != 0xE9) {
         return 0;
     }
 
@@ -4991,9 +8028,9 @@ bool AreCorePoolsReadyForDeferredReplay(uint32_t* pedOut, uint32_t* vehicleOut, 
         IsPoolReadyForDeferredReplay(colModel);
 }
 
-bool TryEnsureCPoolsInitialised(const char* reason)
+bool TryEnsureCPoolsInitialised(const char* reason, bool allowEarlyRecovery)
 {
-    if (!g_config.enableCPoolsInitialiseRecovery) {
+    if (!g_config.enableCPoolsInitialiseRecovery && !allowEarlyRecovery) {
         return false;
     }
 
@@ -5006,7 +8043,10 @@ bool TryEnsureCPoolsInitialised(const char* reason)
         return false;
     }
 
-    if (IsValidCPool(colBefore)) {
+    if (IsValidCPool(pedBefore) &&
+        IsValidCPool(vehicleBefore) &&
+        IsValidCPool(objectBefore) &&
+        IsValidCPool(colBefore)) {
         return true;
     }
 
@@ -5032,8 +8072,9 @@ bool TryEnsureCPoolsInitialised(const char* reason)
 
     const LONG logCount = InterlockedIncrement(&g_cPoolsInitialiseRecoveryLogs);
     if (logCount <= 16) {
-        Log("CPools recovery: calling CPools::Initialise reason=%s entry=0x%08X executable=%d before ped=0x%08X vehicle=0x%08X object=0x%08X colModel=0x%08X",
+        Log("CPools recovery: calling CPools::Initialise reason=%s early=%d entry=0x%08X executable=%d before ped=0x%08X vehicle=0x%08X object=0x%08X colModel=0x%08X",
             reason ? reason : "<null>",
+            allowEarlyRecovery ? 1 : 0,
             kCPoolsInitialise,
             IsExecutableCommitted(kCPoolsInitialise) ? 1 : 0,
             pedBefore,
@@ -5103,9 +8144,9 @@ struct LazyCPoolSpec {
 };
 
 LazyCPoolSpec g_lazyCPoolSpecs[] = {
-    { "PtrNode Singles", kPtrNodeSinglePoolPtr, 0x00550180, 0x00863D10, "PtrNode Singles", 70000, 0 },
-    { "PtrNode Doubles", kPtrNodeDoublePoolPtr, 0x00550250, 0x00863D00, "PtrNode Doubles", 3200, 0 },
-    { "EntryInfoNodes", kEntryInfoNodePoolPtr, 0x00550320, 0x00863CF0, "EntryInfoNodes", 500, 0 },
+    { "PtrNode Singles", kPtrNodeSinglePoolPtr, 0x00550180, 0x00863D10, "PtrNode Singles", 300000, 0 },
+    { "PtrNode Doubles", kPtrNodeDoublePoolPtr, 0x00550250, 0x00863D00, "PtrNode Doubles", 150000, 0 },
+    { "EntryInfoNodes", kEntryInfoNodePoolPtr, 0x00550320, 0x00863CF0, "EntryInfoNodes", 150000, 0 },
     { "Peds", kOriginalPedPoolPtr, 0x005503F0, 0x00863CE8, "Peds", 140, 0 },
     { "Vehicles", kOriginalVehiclePoolPtr, 0x005504C0, 0x00863CDC, "Vehicles", 110, 0 },
     { "Buildings", kOriginalBuildingPoolPtr, 0x00550570, 0x00863CD0, "Buildings", 13000, 0 },
@@ -5151,8 +8192,15 @@ bool EnsureLazyCPoolReady(uintptr_t poolPtr, const char* reason)
         return true;
     }
 
-    const LONG oldState = InterlockedCompareExchange(&spec->state, 1, 0);
-    if (oldState != 0) {
+    LONG oldState = InterlockedCompareExchange(&spec->state, 1, 0);
+    bool ownsCreateAttempt = oldState == 0;
+    if (!ownsCreateAttempt && (oldState == -1 || oldState == 2)) {
+        const LONG retryState = oldState;
+        oldState = InterlockedCompareExchange(&spec->state, 1, retryState);
+        ownsCreateAttempt = oldState == retryState;
+    }
+
+    if (!ownsCreateAttempt) {
         SafeReadU32(spec->poolPtr, &pool);
         return IsValidCPool(pool);
     }
@@ -5219,13 +8267,14 @@ bool EnsureLazyCPoolReady(uintptr_t poolPtr, const char* reason)
         capacity,
         spec->iniKey);
 
-    InterlockedExchange(&spec->state, IsValidCPool(finalPool) ? 2 : -1);
+    const bool ready = IsValidCPool(finalPool);
+    InterlockedExchange(&spec->state, ready ? 2 : -1);
 
-    if (created && IsValidCPool(finalPool)) {
+    if (created && ready && InterlockedCompareExchange(&g_lazyCPoolBatchDepth, 0, 0) == 0) {
         TriggerDeferredPoolAllocatesForPool(spec->poolPtr);
     }
 
-    return created && IsValidCPool(finalPool);
+    return ready;
 }
 
 void TriggerDeferredPoolAllocatesForPool(uintptr_t poolPtrAddress)
@@ -5334,6 +8383,104 @@ bool EnsureLazyCoreCPoolsReady(const char* reason)
     return allReady;
 }
 
+bool EnsureBatchLazyCPoolsInitialised(const char* reason, bool forceRetry)
+{
+    if (!g_config.enableLazyCPoolRegistry || !g_config.enableBatchLazyCPoolInitialise) {
+        return false;
+    }
+
+    const LONG state = InterlockedCompareExchange(&g_batchLazyCPoolInitialiseState, 0, 0);
+    if (state == 2 && !forceRetry) {
+        return true;
+    }
+    if (state == 1) {
+        Sleep(0);
+        return InterlockedCompareExchange(&g_batchLazyCPoolInitialiseState, 0, 0) == 2;
+    }
+    if (state == -1 && !forceRetry) {
+        forceRetry = true;
+    }
+
+    const LONG expected = (forceRetry && state == 2) ? 2 : ((state == -1) ? -1 : 0);
+    if (InterlockedCompareExchange(&g_batchLazyCPoolInitialiseState, 1, expected) != expected) {
+        return InterlockedCompareExchange(&g_batchLazyCPoolInitialiseState, 0, 0) == 2;
+    }
+
+    const LONG logCount = InterlockedIncrement(&g_batchLazyCPoolInitialiseLogs);
+    if (logCount <= 32) {
+        Log("lazy CPool registry: batch initialise begin reason=%s retry=%d oldState=%ld",
+            reason ? reason : "<null>",
+            forceRetry ? 1 : 0,
+            state);
+    }
+
+    InterlockedIncrement(&g_lazyCPoolBatchDepth);
+    const bool allReady = EnsureLazyCoreCPoolsReady(reason ? reason : "batch lazy CPools initialise");
+    InterlockedDecrement(&g_lazyCPoolBatchDepth);
+
+    if (allReady) {
+        for (const auto& spec : g_lazyCPoolSpecs) {
+            TriggerDeferredPoolAllocatesForPool(spec.poolPtr);
+        }
+    }
+
+    uint32_t ptrSingle = 0;
+    uint32_t ptrDouble = 0;
+    uint32_t entryInfo = 0;
+    uint32_t ped = 0;
+    uint32_t vehicle = 0;
+    uint32_t building = 0;
+    uint32_t object = 0;
+    uint32_t dummy = 0;
+    uint32_t colModel = 0;
+    uint32_t tasks = 0;
+    uint32_t events = 0;
+    uint32_t pointRoute = 0;
+    uint32_t patrolRoute = 0;
+    uint32_t nodeRoute = 0;
+    uint32_t taskAllocator = 0;
+    uint32_t pedIntelligence = 0;
+    uint32_t pedAttractors = 0;
+    SafeReadU32(kPtrNodeSinglePoolPtr, &ptrSingle);
+    SafeReadU32(kPtrNodeDoublePoolPtr, &ptrDouble);
+    SafeReadU32(kEntryInfoNodePoolPtr, &entryInfo);
+    ReadCorePoolPointers(&ped, &vehicle, &object, &colModel);
+    SafeReadU32(kOriginalBuildingPoolPtr, &building);
+    SafeReadU32(kOriginalDummyPoolPtr, &dummy);
+    SafeReadU32(kTasksPoolPtr, &tasks);
+    SafeReadU32(kEventsPoolPtr, &events);
+    SafeReadU32(kPointRoutePoolPtr, &pointRoute);
+    SafeReadU32(kPatrolRoutePoolPtr, &patrolRoute);
+    SafeReadU32(kNodeRoutePoolPtr, &nodeRoute);
+    SafeReadU32(kTaskAllocatorPoolPtr, &taskAllocator);
+    SafeReadU32(kPedIntelligencePoolPtr, &pedIntelligence);
+    SafeReadU32(kPedAttractorsPoolPtr, &pedAttractors);
+
+    Log("lazy CPool registry: batch initialise end reason=%s allReady=%d ptrSingle=0x%08X ptrDouble=0x%08X entryInfo=0x%08X ped=0x%08X vehicle=0x%08X building=0x%08X object=0x%08X dummy=0x%08X colModel=0x%08X tasks=0x%08X events=0x%08X pointRoute=0x%08X patrolRoute=0x%08X nodeRoute=0x%08X taskAllocator=0x%08X pedIntelligence=0x%08X pedAttractors=0x%08X",
+        reason ? reason : "<null>",
+        allReady ? 1 : 0,
+        ptrSingle,
+        ptrDouble,
+        entryInfo,
+        ped,
+        vehicle,
+        building,
+        object,
+        dummy,
+        colModel,
+        tasks,
+        events,
+        pointRoute,
+        patrolRoute,
+        nodeRoute,
+        taskAllocator,
+        pedIntelligence,
+        pedAttractors);
+
+    InterlockedExchange(&g_batchLazyCPoolInitialiseState, allReady ? 2 : -1);
+    return allReady;
+}
+
 bool WriteRel32Jump(uintptr_t source, uintptr_t target)
 {
     const int64_t diff = static_cast<int64_t>(target) - static_cast<int64_t>(source + 5);
@@ -5347,6 +8494,309 @@ bool WriteRel32Jump(uintptr_t source, uintptr_t target)
     const int32_t rel = static_cast<int32_t>(diff);
     std::memcpy(bytes + 1, &rel, sizeof(rel));
     return WriteBytesWithProtect(source, bytes, sizeof(bytes));
+}
+
+extern "C" bool __cdecl Bridge_CStreaming_IsVeryBusy()
+{
+    uint8_t loadingPriority = 0;
+    uint32_t requested = 0;
+
+    SafeReadU8(kRendererLoadingPriority, &loadingPriority);
+    SafeReadU32(kStreamingNumModelsRequested, &requested);
+
+    const uint32_t threshold = static_cast<uint32_t>(g_config.streamingBusyThreshold < 5 ? 5 : g_config.streamingBusyThreshold);
+    if (g_config.enablePedStreamingZoneRepair &&
+        loadingPriority == 0 &&
+        ReadRuntimeU32ForLog(kPopCycleCurrentZoneType) != 0xFFFFFFFFu &&
+        ReadRuntimeU32ForLog(kPopCycleCurrentZoneInfo) != 0 &&
+        ReadRuntimeU32ForLog(kStreamingCurrentZoneType) == 0xFFFFFFFFu &&
+        ReadRuntimeU32ForLog(kStreamingNumPedsLoaded) == 0 &&
+        ReadZoneStreamingCheatMaskForLog() == 0 &&
+        ReadRuntimeByteForLog(kStreamingDisableStreaming) == 0 &&
+        ReadRuntimeByteForLog(kCCutsceneMgrCutsceneProcessing) == 0 &&
+        ReadRuntimeByteForLog(kCReplayMode) != 1 &&
+        ReadRuntimeU32ForLog(kCGameCurrentArea) == 0) {
+        static LONG logCount = 0;
+        const LONG count = InterlockedIncrement(&logCount);
+        if (count <= 16 || (count % 60) == 0) {
+            Log("streaming busy patch: forcing not-busy for empty ped zone count=%ld requested=%u threshold=%u popZone=%u streamZone=%u msPeds=%u",
+                count,
+                requested,
+                threshold,
+                ReadRuntimeU32ForLog(kPopCycleCurrentZoneType),
+                ReadRuntimeU32ForLog(kStreamingCurrentZoneType),
+                ReadRuntimeU32ForLog(kStreamingNumPedsLoaded));
+        }
+        return false;
+    }
+
+    return loadingPriority != 0 || requested > threshold;
+}
+
+void InstallStreamingBusyThresholdPatch()
+{
+#if defined(_M_IX86)
+    if (!g_config.enableStreamingBusyThresholdPatch) {
+        return;
+    }
+
+    uint8_t current[8]{};
+    if (!IsReadableCommitted(kCStreamingIsVeryBusy, sizeof(current))) {
+        Log("streaming busy patch: CStreaming::IsVeryBusy unreadable address=0x%08X", kCStreamingIsVeryBusy);
+        return;
+    }
+
+    __try {
+        std::memcpy(current, reinterpret_cast<const void*>(kCStreamingIsVeryBusy), sizeof(current));
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        Log("streaming busy patch: byte read fault address=0x%08X", kCStreamingIsVeryBusy);
+        return;
+    }
+
+    const uintptr_t target = reinterpret_cast<uintptr_t>(Bridge_CStreaming_IsVeryBusy);
+    if (current[0] == 0xE9) {
+        int32_t existingRel = 0;
+        std::memcpy(&existingRel, current + 1, sizeof(existingRel));
+        const uintptr_t existingTarget = kCStreamingIsVeryBusy + 5 + static_cast<intptr_t>(existingRel);
+        if (existingTarget == target) {
+            Log("streaming busy patch: already installed threshold=%d address=0x%08X bridge=0x%08X",
+                g_config.streamingBusyThreshold,
+                kCStreamingIsVeryBusy,
+                target);
+        } else {
+            Log("streaming busy patch: existing hook detected at 0x%08X target=0x%08X previous=%02X %02X %02X %02X %02X %02X %02X %02X; skipping to preserve hook chain",
+                kCStreamingIsVeryBusy,
+                existingTarget,
+                current[0], current[1], current[2], current[3],
+                current[4], current[5], current[6], current[7]);
+        }
+        return;
+    }
+
+    if (WriteRel32Jump(kCStreamingIsVeryBusy, target)) {
+        Log("streaming busy patch: installed threshold=%d address=0x%08X bridge=0x%08X previous=%02X %02X %02X %02X %02X %02X %02X %02X",
+            g_config.streamingBusyThreshold,
+            kCStreamingIsVeryBusy,
+            target,
+            current[0], current[1], current[2], current[3],
+            current[4], current[5], current[6], current[7]);
+    }
+#else
+    Log("streaming busy patch: unsupported architecture");
+#endif
+}
+
+void InstallPopulationUpdateBudgetPatch()
+{
+#if defined(_M_IX86)
+    if (!g_config.enablePopulationUpdateBudgetPatch) {
+        return;
+    }
+
+    uint8_t current[3]{};
+    if (!IsReadableCommitted(kCGamePopulationUpdateBudgetCmp, sizeof(current))) {
+        Log("population update budget patch: comparison unreadable address=0x%08X", kCGamePopulationUpdateBudgetCmp);
+        return;
+    }
+
+    __try {
+        std::memcpy(current, reinterpret_cast<const void*>(kCGamePopulationUpdateBudgetCmp), sizeof(current));
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        Log("population update budget patch: byte read fault address=0x%08X", kCGamePopulationUpdateBudgetCmp);
+        return;
+    }
+
+    if (current[0] != 0x83 || current[1] != 0xFE) {
+        Log("population update budget patch: unexpected bytes at 0x%08X old=%02X %02X %02X",
+            kCGamePopulationUpdateBudgetCmp,
+            current[0],
+            current[1],
+            current[2]);
+        return;
+    }
+
+    int budget = g_config.populationUpdateBudgetMs;
+    if (budget < 1) {
+        budget = 1;
+    } else if (budget > 127) {
+        budget = 127;
+    }
+
+    const uint8_t budgetByte = static_cast<uint8_t>(budget);
+    if (WriteBytesWithProtect(kCGamePopulationUpdateBudgetImmediate, &budgetByte, sizeof(budgetByte))) {
+        Log("population update budget patch: installed budgetMs=%d address=0x%08X previous=%u",
+            budget,
+            kCGamePopulationUpdateBudgetImmediate,
+            static_cast<unsigned>(current[2]));
+    }
+#else
+    Log("population update budget patch: unsupported architecture");
+#endif
+}
+
+void InstallRwClumpForAllAtomicsGuard()
+{
+#if defined(_M_IX86)
+    constexpr uintptr_t patchAddress = kRpClumpForAllAtomics;
+    constexpr uintptr_t continueAddress = kRpClumpForAllAtomics + 5;
+    static const uint8_t expectedBytes[] = {
+        0x8B, 0x44, 0x24, 0x04, // mov eax, [esp+4]
+        0x53                    // push ebx
+    };
+
+    uint8_t current[sizeof(expectedBytes)]{};
+    if (!IsReadableCommitted(patchAddress, sizeof(current))) {
+        Log("rw clump guard: patch address unreadable 0x%08X", patchAddress);
+        return;
+    }
+
+    __try {
+        std::memcpy(current, reinterpret_cast<const void*>(patchAddress), sizeof(current));
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        Log("rw clump guard: read exception at 0x%08X", patchAddress);
+        return;
+    }
+
+    const uintptr_t currentTarget = DecodeRel32JumpTarget(patchAddress);
+    const uintptr_t guardTarget = reinterpret_cast<uintptr_t>(Bridge_RpClumpForAllAtomics_Guard);
+    if (currentTarget == guardTarget) {
+        Log("rw clump guard: already installed at RpClumpForAllAtomics");
+        return;
+    }
+
+    if (std::memcmp(current, expectedBytes, sizeof(expectedBytes)) != 0) {
+        Log("rw clump guard: unexpected bytes at 0x%08X old=%02X %02X %02X %02X %02X currentTarget=0x%08X",
+            patchAddress,
+            current[0], current[1], current[2], current[3], current[4],
+            currentTarget);
+        return;
+    }
+
+    g_rwClumpForAllAtomicsContinue = continueAddress;
+    if (WriteRel32Jump(patchAddress, guardTarget)) {
+        Log("rw clump guard: installed at RpClumpForAllAtomics target=0x%08X continue=0x%08X",
+            guardTarget,
+            g_rwClumpForAllAtomicsContinue);
+    }
+#else
+    Log("rw clump guard: unsupported architecture");
+#endif
+}
+
+void InstallShouldModelBeStreamedGuard()
+{
+#if defined(_M_IX86)
+    constexpr uintptr_t patchAddress = 0x00554F62;
+    constexpr uintptr_t continueAddress = 0x00554F69;
+    constexpr uintptr_t returnFalseAddress = 0x00554F76;
+    static const uint8_t expectedBytes[] = {
+        0xD9, 0x40, 0x24,       // fld dword ptr [eax+24h]
+        0xD8, 0x44, 0x24, 0x20  // fadd dword ptr [esp+20h]
+    };
+
+    const uintptr_t guardTarget = reinterpret_cast<uintptr_t>(Bridge_ShouldModelBeStreamed_ColModelGuard);
+    const uintptr_t currentTarget = DecodeRel32JumpTarget(patchAddress);
+    if (currentTarget == guardTarget) {
+        Log("should stream guard: already installed at 0x%08X", patchAddress);
+        return;
+    }
+
+    uint8_t current[sizeof(expectedBytes)]{};
+    if (!IsReadableCommitted(patchAddress, sizeof(current))) {
+        Log("should stream guard: patch address unreadable 0x%08X", patchAddress);
+        return;
+    }
+
+    __try {
+        std::memcpy(current, reinterpret_cast<const void*>(patchAddress), sizeof(current));
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        Log("should stream guard: read exception at 0x%08X", patchAddress);
+        return;
+    }
+
+    if (std::memcmp(current, expectedBytes, sizeof(expectedBytes)) != 0) {
+        Log("should stream guard: unexpected bytes at 0x%08X old=%02X %02X %02X %02X %02X %02X %02X currentTarget=0x%08X",
+            patchAddress,
+            current[0], current[1], current[2], current[3],
+            current[4], current[5], current[6],
+            currentTarget);
+        return;
+    }
+
+    g_shouldModelBeStreamedContinue = continueAddress;
+    g_shouldModelBeStreamedReturnFalse = returnFalseAddress;
+    uint8_t patch[sizeof(expectedBytes)]{};
+    patch[0] = 0xE9;
+    const int32_t rel = static_cast<int32_t>(guardTarget - (patchAddress + 5));
+    std::memcpy(patch + 1, &rel, sizeof(rel));
+    for (size_t i = 5; i < sizeof(patch); ++i) {
+        patch[i] = 0x90;
+    }
+
+    if (WriteBytesWithProtect(patchAddress, patch, sizeof(patch))) {
+        Log("should stream guard: installed at 0x%08X target=0x%08X continue=0x%08X false=0x%08X",
+            patchAddress,
+            guardTarget,
+            g_shouldModelBeStreamedContinue,
+            g_shouldModelBeStreamedReturnFalse);
+    }
+#else
+    Log("should stream guard: unsupported architecture");
+#endif
+}
+
+void InstallRpAnimBlendClumpInitGuard()
+{
+#if defined(_M_IX86)
+    constexpr uintptr_t patchAddress = kRpAnimBlendClumpInit;
+    constexpr uintptr_t continueAddress = kRpAnimBlendClumpInit + 5;
+    static const uint8_t expectedBytes[] = {
+        0x56,                   // push esi
+        0x8B, 0x74, 0x24, 0x08  // mov esi, [esp+8]
+    };
+
+    uint8_t current[sizeof(expectedBytes)]{};
+    if (!IsReadableCommitted(patchAddress, sizeof(current))) {
+        Log("rp anim clump init guard: patch address unreadable 0x%08X", patchAddress);
+        return;
+    }
+
+    __try {
+        std::memcpy(current, reinterpret_cast<const void*>(patchAddress), sizeof(current));
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        Log("rp anim clump init guard: read exception at 0x%08X", patchAddress);
+        return;
+    }
+
+    const uintptr_t currentTarget = DecodeRel32JumpTarget(patchAddress);
+    const uintptr_t guardTarget = reinterpret_cast<uintptr_t>(Bridge_RpAnimBlendClumpInit_Guard);
+    if (currentTarget == guardTarget) {
+        Log("rp anim clump init guard: already installed at RpAnimBlendClumpInit");
+        return;
+    }
+
+    if (std::memcmp(current, expectedBytes, sizeof(expectedBytes)) != 0) {
+        Log("rp anim clump init guard: unexpected bytes at 0x%08X old=%02X %02X %02X %02X %02X currentTarget=0x%08X",
+            patchAddress,
+            current[0], current[1], current[2], current[3], current[4],
+            currentTarget);
+        return;
+    }
+
+    g_rpAnimBlendClumpInitContinue = continueAddress;
+    if (WriteRel32Jump(patchAddress, guardTarget)) {
+        Log("rp anim clump init guard: installed at RpAnimBlendClumpInit target=0x%08X continue=0x%08X",
+            guardTarget,
+            g_rpAnimBlendClumpInitContinue);
+    }
+#else
+    Log("rp anim clump init guard: unsupported architecture");
+#endif
 }
 
 uintptr_t CreateRel32Trampoline(uintptr_t source, size_t stolenBytes)
@@ -8897,19 +12347,19 @@ void InstallCleoPlusPoolAllocateGuard()
         "CLEO+ ObjectPool accessor (AllocateBlocks-like prologue)",
         objAddr,
         kOriginalObjectPoolPtr,
-        reinterpret_cast<uintptr_t>(Bridge_CleoPlus_ObjectAllocateBlocks_PoolGuard),
+        0,
         &g_cleoPlusObjectAllocateBlocksContinue);
     InstallOneCleoPlusPoolAllocateGuard(
         "VehicleExtendedData::AllocateBlocks",
         vehAddr,
         kOriginalVehiclePoolPtr,
-        reinterpret_cast<uintptr_t>(Bridge_CleoPlus_VehicleAllocateBlocks_PoolGuard),
+        0,
         &g_cleoPlusVehicleAllocateBlocksContinue);
     InstallOneCleoPlusPoolAllocateGuard(
         "PedExtendedData::AllocateBlocks",
         pedAddr,
         kOriginalPedPoolPtr,
-        reinterpret_cast<uintptr_t>(Bridge_CleoPlus_PedAllocateBlocks_PoolGuard),
+        0,
         &g_cleoPlusPedAllocateBlocksContinue);
 #endif
 }
@@ -8917,9 +12367,16 @@ void InstallCleoPlusPoolAllocateGuard()
 void InstallMixSetsPoolAllocateGuard()
 {
 #if defined(_M_IX86)
+    if (g_mixSetsPedAllocateBlocksContinue) {
+        return;
+    }
+
     HMODULE mixSets = GetModuleHandleA("mixsets.asi");
     if (!mixSets) {
         mixSets = GetModuleHandleA("MixSets.asi");
+    }
+    if (!mixSets) {
+        mixSets = FindLoadedModuleBySubstring("mixsets");
     }
     if (!mixSets) {
         Log("MixSets pool allocate guard: MixSets.asi not loaded yet");
@@ -8936,7 +12393,7 @@ void InstallMixSetsPoolAllocateGuard()
         "MixSets PedExtendedData::AllocateBlocks",
         pedAddr,
         kOriginalPedPoolPtr,
-        reinterpret_cast<uintptr_t>(Bridge_MixSets_PedAllocateBlocks_PoolGuard),
+        0,
         &g_mixSetsPedAllocateBlocksContinue);
 #endif
 }
@@ -8968,9 +12425,35 @@ HMODULE FindLoadedModuleBySubstring(const char* needle)
     return result;
 }
 
+DWORD WINAPI MixSetsPoolAllocateGuardInstallThread(void*)
+{
+    for (int attempt = 0; attempt < 300; ++attempt) {
+        if (!g_config.enableMixSetsPoolAllocateGuard || g_mixSetsPedAllocateBlocksContinue) {
+            return 0;
+        }
+
+        if (FindLoadedModuleBySubstring("mixsets")) {
+            InstallMixSetsPoolAllocateGuard();
+            return 0;
+        }
+
+        if (attempt == 0 || attempt == 50 || attempt == 150) {
+            Log("MixSets pool allocate guard: waiting for module attempt=%d", attempt);
+        }
+        Sleep(100);
+    }
+
+    Log("MixSets pool allocate guard: module still not loaded after delayed install window");
+    return 0;
+}
+
 void InstallUrbanizePoolAllocateGuard()
 {
 #if defined(_M_IX86)
+    if (g_urbanizePedAllocateBlocksContinue) {
+        return;
+    }
+
     HMODULE urbanize = GetModuleHandleA("urbanize (junior_djjr).asi");
     if (!urbanize) {
         urbanize = FindLoadedModuleBySubstring("urbanize");
@@ -8993,6 +12476,152 @@ void InstallUrbanizePoolAllocateGuard()
         0,
         &g_urbanizePedAllocateBlocksContinue);
 #endif
+}
+
+DWORD WINAPI UrbanizePoolAllocateGuardInstallThread(void*)
+{
+    for (int attempt = 0; attempt < 300; ++attempt) {
+        if (!g_config.enableUrbanizePoolAllocateGuard || g_urbanizePedAllocateBlocksContinue) {
+            return 0;
+        }
+
+        if (FindLoadedModuleBySubstring("urbanize")) {
+            InstallUrbanizePoolAllocateGuard();
+            return 0;
+        }
+
+        if (attempt == 0 || attempt == 50 || attempt == 150) {
+            Log("Urbanize pool allocate guard: waiting for module attempt=%d", attempt);
+        }
+        Sleep(100);
+    }
+
+    Log("Urbanize pool allocate guard: module still not loaded after delayed install window");
+    return 0;
+}
+
+uintptr_t FindVehFuncsVehicleAllocateBlocks(HMODULE vehFuncs)
+{
+#if defined(_M_IX86)
+    if (!vehFuncs) {
+        return 0;
+    }
+
+    const uintptr_t base = reinterpret_cast<uintptr_t>(vehFuncs);
+    MODULEINFO mi{};
+    if (!GetModuleInformation(GetCurrentProcess(), vehFuncs, &mi, sizeof(mi))) {
+        return 0;
+    }
+
+    PIMAGE_DOS_HEADER dos = reinterpret_cast<PIMAGE_DOS_HEADER>(base);
+    PIMAGE_NT_HEADERS nt = reinterpret_cast<PIMAGE_NT_HEADERS>(base + dos->e_lfanew);
+    PIMAGE_SECTION_HEADER section = IMAGE_FIRST_SECTION(nt);
+    uintptr_t textBase = 0;
+    size_t textSize = 0;
+    for (WORD i = 0; i < nt->FileHeader.NumberOfSections; ++i, ++section) {
+        if (std::memcmp(section->Name, ".text\0\0\0", 8) == 0) {
+            textBase = base + section->VirtualAddress;
+            textSize = section->Misc.VirtualSize;
+            break;
+        }
+    }
+    if (!textBase || textSize < 96 || !IsReadableCommitted(textBase, textSize)) {
+        return 0;
+    }
+
+    uintptr_t firstMatch = 0;
+    uintptr_t secondMatch = 0;
+    for (uintptr_t address = textBase; address + 96 <= textBase + textSize; ++address) {
+        if (!LooksLikePluginSdkPoolAllocateBlocks(address, kOriginalVehiclePoolPtr)) {
+            continue;
+        }
+        if (!firstMatch) {
+            firstMatch = address;
+        } else {
+            secondMatch = address;
+            break;
+        }
+    }
+
+    if (firstMatch && !secondMatch) {
+        Log("VehFuncs pool allocate guard: VehicleExtendedData pattern single match at 0x%08X rva=0x%08X",
+            firstMatch,
+            static_cast<uint32_t>(firstMatch - base));
+        return firstMatch;
+    }
+
+    if (firstMatch && secondMatch) {
+        Log("VehFuncs pool allocate guard: VehicleExtendedData pattern ambiguous first=0x%08X second=0x%08X",
+            firstMatch,
+            secondMatch);
+        return UINTPTR_MAX;
+    }
+
+    return 0;
+#else
+    (void)vehFuncs;
+    return 0;
+#endif
+}
+
+void InstallVehFuncsPoolAllocateGuard()
+{
+#if defined(_M_IX86)
+    if (g_vehFuncsVehicleAllocateBlocksContinue) {
+        return;
+    }
+
+    HMODULE vehFuncs = GetModuleHandleA("vehfuncs.asi");
+    if (!vehFuncs) {
+        vehFuncs = GetModuleHandleA("VehFuncs.asi");
+    }
+    if (!vehFuncs) {
+        vehFuncs = FindLoadedModuleBySubstring("vehfuncs");
+    }
+    if (!vehFuncs) {
+        Log("VehFuncs pool allocate guard: vehfuncs module not loaded yet");
+        return;
+    }
+
+    uintptr_t vehAddr = FindVehFuncsVehicleAllocateBlocks(vehFuncs);
+    if (vehAddr == UINTPTR_MAX) {
+        Log("VehFuncs pool allocate guard: ambiguous VehicleExtendedData match; guard not installed");
+        return;
+    }
+    if (!vehAddr) {
+        vehAddr = reinterpret_cast<uintptr_t>(vehFuncs) + 0x029650;
+        Log("VehFuncs pool allocate guard: pattern failed, using observed fallback 0x%08X", vehAddr);
+    }
+
+    InstallOneCleoPlusPoolAllocateGuard(
+        "VehFuncs VehicleExtendedData::AllocateBlocks",
+        vehAddr,
+        kOriginalVehiclePoolPtr,
+        0,
+        &g_vehFuncsVehicleAllocateBlocksContinue);
+#endif
+}
+
+DWORD WINAPI VehFuncsPoolAllocateGuardInstallThread(void*)
+{
+    for (int attempt = 0; attempt < 300; ++attempt) {
+        if (!g_config.enableVehFuncsPoolAllocateGuard || g_vehFuncsVehicleAllocateBlocksContinue) {
+            return 0;
+        }
+
+        if (FindLoadedModuleBySubstring("vehfuncs")) {
+            InstallVehFuncsPoolAllocateGuard();
+            return 0;
+        }
+
+        if (attempt == 0 || attempt == 50 || attempt == 150) {
+            Log("VehFuncs pool allocate guard: waiting for module attempt=%d", attempt);
+        }
+        Sleep(100);
+    }
+
+    Log("VehFuncs pool allocate guard: module still not loaded after delayed install window");
+    return 0;
 }
 
 void InstallAnimUncompressNullGuard()
@@ -9159,6 +12788,65 @@ void InstallAnimUpdateBlendGuard()
     }
 #else
     Log("anim assoc guard: unsupported architecture");
+#endif
+}
+
+void InstallAnimBlendGroupGuard()
+{
+#if defined(_M_IX86)
+    constexpr uintptr_t patchAddress = 0x004D4610;
+    constexpr uintptr_t continueAddress = 0x004D4617;
+    static const uint8_t expectedBytes[] = {
+        0x83, 0xEC, 0x14,       // sub esp, 14h
+        0x8B, 0x4C, 0x24, 0x18  // mov ecx, [esp+18h]
+    };
+
+    uint8_t current[sizeof(expectedBytes)]{};
+    if (!IsReadableCommitted(patchAddress, sizeof(current))) {
+        Log("anim blend guard: patch address unreadable 0x%08X", patchAddress);
+        return;
+    }
+
+    __try {
+        std::memcpy(current, reinterpret_cast<const void*>(patchAddress), sizeof(current));
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        Log("anim blend guard: read exception at 0x%08X", patchAddress);
+        return;
+    }
+
+    const uintptr_t currentTarget = DecodeRel32JumpTarget(patchAddress);
+    const uintptr_t guardTarget = reinterpret_cast<uintptr_t>(Bridge_AnimBlendGroup_Guard);
+    if (currentTarget == guardTarget) {
+        Log("anim blend guard: already installed at CAnimManager::BlendAnimation(group)");
+        return;
+    }
+
+    if (std::memcmp(current, expectedBytes, sizeof(expectedBytes)) != 0) {
+        Log("anim blend guard: unexpected bytes at 0x%08X old=%02X %02X %02X %02X %02X %02X %02X currentTarget=0x%08X",
+            patchAddress,
+            current[0], current[1], current[2], current[3],
+            current[4], current[5], current[6],
+            currentTarget);
+        return;
+    }
+
+    g_animBlendGroupContinue = continueAddress;
+    uint8_t patch[sizeof(expectedBytes)]{};
+    patch[0] = 0xE9;
+    const int32_t rel = static_cast<int32_t>(guardTarget - (patchAddress + 5));
+    std::memcpy(patch + 1, &rel, sizeof(rel));
+    for (size_t i = 5; i < sizeof(patch); ++i) {
+        patch[i] = 0x90;
+    }
+
+    if (WriteBytesWithProtect(patchAddress, patch, sizeof(patch))) {
+        Log("anim blend guard: installed at CAnimManager::BlendAnimation(group) target=0x%08X continue=0x%08X",
+            guardTarget,
+            g_animBlendGroupContinue);
+    }
+#else
+    Log("anim blend guard: unsupported architecture");
 #endif
 }
 
@@ -10388,13 +14076,73 @@ bool BreakRepeatedNonExecutableExceptionLoop(EXCEPTION_POINTERS* info)
     return true;
 }
 
+#if defined(_M_IX86)
+bool SkipReplayMarkEverythingAsNew(CONTEXT* ctx, const char* reason, bool restoreSavedEsi)
+{
+    if (!ctx) {
+        return false;
+    }
+
+    const uintptr_t savedEsiSlot = ctx->Esp;
+    const uintptr_t returnSlot = ctx->Esp + (restoreSavedEsi ? sizeof(uintptr_t) : 0);
+    uint32_t returnAddress = 0;
+    if (!SafeReadU32(returnSlot, &returnAddress) ||
+        !returnAddress ||
+        !IsExecutableCommitted(returnAddress)) {
+        Log("replay pool skip guard: cannot skip reason=%s esp=0x%08X returnSlot=0x%08X return=0x%08X executable=%d",
+            reason ? reason : "<null>",
+            ctx->Esp,
+            returnSlot,
+            returnAddress,
+            returnAddress && IsExecutableCommitted(returnAddress) ? 1 : 0);
+        return false;
+    }
+
+    uint32_t savedEsi = 0;
+    if (restoreSavedEsi && !SafeReadU32(savedEsiSlot, &savedEsi)) {
+        Log("replay pool skip guard: cannot restore ESI reason=%s esp=0x%08X",
+            reason ? reason : "<null>",
+            ctx->Esp);
+        return false;
+    }
+
+    static LONG logCount = 0;
+    const LONG count = InterlockedIncrement(&logCount);
+    if (count <= 16) {
+        Log("replay pool skip guard: skipped CReplay::MarkEverythingAsNew reason=%s eip=0x%08X return=0x%08X esp=0x%08X restoreSavedEsi=%d savedEsi=0x%08X",
+            reason ? reason : "<null>",
+            ctx->Eip,
+            returnAddress,
+            ctx->Esp,
+            restoreSavedEsi ? 1 : 0,
+            savedEsi);
+        LogStackModules(ctx->Esp);
+    }
+
+    if (restoreSavedEsi) {
+        ctx->Esi = savedEsi;
+    }
+    ctx->Esp = returnSlot + sizeof(uintptr_t);
+    ctx->Eip = returnAddress;
+    return true;
+}
+#endif
+
 const char* KnownGameAddressName(uintptr_t eip)
 {
     switch (eip) {
+    case kCPtrListSingleAddItemNullWrite:
+        return "CPtrListSingleLink::AddItem null PtrNodeSingle allocation";
+    case kCPtrListDoubleAddItemNullWrite:
+        return "CPtrListDoubleLink::AddItem null PtrNodeDouble allocation";
+    case kCQuadTreeNodeAddItemNullWrite:
+        return "CQuadTreeNode::AddItem null PtrNodeSingle allocation";
+    case kCPtrNodeSingleLinkPoolNewEntry:
+        return "CPtrNodeSingleLinkPool::New / CPools::ms_pPtrNodeSingleLinkPool allocation";
+    case kCPtrNodeDoubleLinkPoolNewEntry:
+        return "CPtrNodeDoubleLinkPool::New / CPools::ms_pPtrNodeDoubleLinkPool allocation";
     case 0x00533650:
-        return "CEntity::GetBoundCentre prologue";
-    case 0x0053368B:
-        return "CEntity::GetBoundCentre / CPtrListDoubleLink::AddItem null output path";
+        return "CPtrListSingleLink::RemoveItem link update";
     case 0x00533769:
         return "CEntity::GetRectAdd caller area";
     case 0x0054F3B3:
@@ -10409,6 +14157,18 @@ const char* KnownGameAddressName(uintptr_t eip)
         return "CRadar::GetActualBlipArrayIndex entry";
     case 0x00582889:
         return "CRadar::GetActualBlipArrayIndex counter read";
+    case kCBuildingPoolNewEntry:
+        return "CBuildingPool::New / CPools::ms_pBuildingPool allocation";
+    case kCDummyPoolNewEntry:
+        return "CDummyPool::New / CPools::ms_pDummyPool allocation";
+    case kCIplStoreRemoveIplObjectPoolRead:
+        return "CIplStore::RemoveIpl object pool size read";
+    case kCReplayMarkEverythingAsNewPedPoolRead:
+        return "CReplay::MarkEverythingAsNew ped pool size read";
+    case kCReplayMarkEverythingAsNewVehiclePoolRead:
+        return "CReplay::MarkEverythingAsNew vehicle pool size read";
+    case kCEntryInfoNodePoolNewEntry:
+        return "CEntryInfoNodePool::New / CPools::ms_pEntryInfoNodePool allocation";
     case 0x0040FB80:
         return "CColModelPool::New / CPools::ms_pColModelPool allocation";
     case 0x005B31A5:
@@ -10419,6 +14179,18 @@ const char* KnownGameAddressName(uintptr_t eip)
         return "CPool::New generic / Tasks pool allocation";
     case 0x0061A5A0:
         return "CTask::operator new / CPools::ms_pTaskPool";
+    case kRpClumpForAllAtomicsNullClumpRead:
+        return "RpClumpForAllAtomics null/corrupt clump read";
+    case kRpAnimBlendAllocateData:
+        return "RpAnimBlendAllocateData entry";
+    case kRpAnimBlendAllocateDataWrite:
+        return "RpAnimBlendAllocateData clump plugin write";
+    case kRpAnimBlendClumpFillFrameArray:
+        return "RpAnimBlendClumpFillFrameArray entry";
+    case kRpAnimBlendClumpFillFrameArrayRead:
+        return "RpAnimBlendClumpFillFrameArray clump plugin read";
+    case kRpAnimBlendClumpInit:
+        return "RpAnimBlendClumpInit entry";
     case 0x004D41C0:
         return "CAnimManager::UncompressAnimation";
     case 0x004D1490:
@@ -10475,10 +14247,25 @@ void LogCrashClassification(EXCEPTION_POINTERS* info)
         category = "SCRIPT_OR_PLUGIN_STALE_EXEC_POINTER";
     } else if (staleExec) {
         category = "STALE_EXEC_POINTER_OR_FREED_CODE";
-    } else if (eip == 0x0053368B || eip == 0x00533650) {
-        category = "MODEL_BOUND_CENTRE_OR_STREAMING";
+    } else if (eip == kCPtrListSingleAddItemNullWrite ||
+        eip == kCPtrListDoubleAddItemNullWrite ||
+        eip == kCQuadTreeNodeAddItemNullWrite) {
+        category = "PTR_NODE_POOL_EXHAUSTED";
+    } else if (eip == kCBuildingPoolNewEntry) {
+        category = "BUILDING_POOL_ALLOCATION";
+    } else if (eip == kCDummyPoolNewEntry) {
+        category = "DUMMY_POOL_ALLOCATION";
+    } else if (eip == kCIplStoreRemoveIplObjectPoolRead) {
+        category = "IPL_REMOVE_OBJECT_POOL_READ";
+    } else if (eip == kCReplayMarkEverythingAsNewPedPoolRead ||
+        eip == kCReplayMarkEverythingAsNewVehiclePoolRead) {
+        category = "REPLAY_POOL_POINTER_READ";
+    } else if (eip == kCEntryInfoNodePoolNewEntry) {
+        category = "ENTRY_INFO_NODE_POOL_ALLOCATION";
     } else if (eip == kCColModelPoolNewEntry) {
         category = "COL_MODEL_POOL_ALLOCATION";
+    } else if (eip == kCPtrNodeSingleLinkPoolNewEntry || eip == kCPtrNodeDoubleLinkPoolNewEntry) {
+        category = "PTR_NODE_POOL_ALLOCATION";
     } else if (eip >= 0x00582870 && eip <= 0x00582899) {
         category = "RADAR_BLIP_HANDLE_OR_TRACE_LIMIT";
     } else if (eip == kCColAccelStartCachePoolRead) {
@@ -10487,9 +14274,17 @@ void LogCrashClassification(EXCEPTION_POINTERS* info)
         category = "TASK_POOL_ALLOCATION";
     } else if (eip >= 0x006F7400 && eip <= 0x006F7800) {
         category = "TRAIN_INIT_OR_FLA_CARRIAGE_LOADER";
+    } else if (eip == kRpClumpForAllAtomicsNullClumpRead) {
+        category = "RW_CLUMP_ATOMICS_NULL_OR_BAD_CLUMP";
     } else if (eip == 0x0054F3B3) {
         category = "PLACEABLE_MATRIX_LIFETIME";
-    } else if (eip == 0x004D41C0 || eip == 0x004CEEC0 || (eip >= 0x004D1680 && eip <= 0x004D1A4A)) {
+    } else if (eip == kRpAnimBlendAllocateDataWrite ||
+        eip == kRpAnimBlendClumpFillFrameArray ||
+        eip == kRpAnimBlendClumpFillFrameArrayRead ||
+        eip == kRpAnimBlendClumpInit ||
+        eip == 0x004D41C0 ||
+        eip == 0x004CEEC0 ||
+        (eip >= 0x004D1680 && eip <= 0x004D1A4A)) {
         category = "ANIMATION_POINTER";
     } else if (ContainsCaseInsensitive(moduleName, "CLEO")) {
         category = "CLEO_PLUGIN_OR_SCRIPT_BRIDGE";
@@ -10515,6 +14310,72 @@ void LogCrashClassification(EXCEPTION_POINTERS* info)
         stackCleo ? 1 : 0,
         stackScriptOpcode ? 1 : 0);
 }
+
+#if defined(_M_IX86)
+bool SkipFailedPtrNodeListAdd(
+    CONTEXT* ctx,
+    const char* label,
+    uintptr_t poolPtrAddress,
+    uintptr_t fault,
+    uintptr_t returnAddressOffset,
+    uintptr_t itemOffset,
+    uintptr_t finalEspAdvance)
+{
+    if (!ctx || ctx->Eax != 0 ||
+        finalEspAdvance < sizeof(uintptr_t) ||
+        !IsReadableCommitted(ctx->Esp, finalEspAdvance)) {
+        return false;
+    }
+
+    uintptr_t savedEsi = 0;
+    uintptr_t returnAddress = 0;
+    uintptr_t item = 0;
+    __try {
+        savedEsi = *reinterpret_cast<const uintptr_t*>(ctx->Esp);
+        returnAddress = *reinterpret_cast<const uintptr_t*>(ctx->Esp + returnAddressOffset);
+        item = *reinterpret_cast<const uintptr_t*>(ctx->Esp + itemOffset);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+
+    if (!IsExecutableCommitted(returnAddress)) {
+        return false;
+    }
+
+    uint32_t pool = 0;
+    uint32_t poolSize = 0;
+    uint32_t firstFree = 0;
+    SafeReadU32(poolPtrAddress, &pool);
+    if (IsValidCPool(pool)) {
+        SafeReadU32(pool + 0x08, &poolSize);
+        SafeReadU32(pool + 0x0C, &firstFree);
+    }
+
+    const LONG count = InterlockedIncrement(&g_ptrNodeExhaustionGuardLogs);
+    if (count <= 32) {
+        Log("ptrnode exhaustion guard: skipped %s add after allocation failure eip=0x%08X fault=0x%08X poolPtr[0x%08X]=0x%08X size=%u firstFree=%u list=0x%08X item=0x%08X return=0x%08X savedEsi=0x%08X esp=0x%08X",
+            label ? label : "<null>",
+            ctx->Eip,
+            fault,
+            poolPtrAddress,
+            pool,
+            poolSize,
+            firstFree,
+            ctx->Esi,
+            item,
+            returnAddress,
+            savedEsi,
+            ctx->Esp);
+        LogStackModules(ctx->Esp);
+    }
+
+    ctx->Esi = static_cast<DWORD>(savedEsi);
+    ctx->Eip = static_cast<DWORD>(returnAddress);
+    ctx->Esp += finalEspAdvance;
+    return true;
+}
+#endif
 
 void LogModuleSnapshot()
 {
@@ -10591,6 +14452,29 @@ LONG CALLBACK BridgeVectoredExceptionHandler(EXCEPTION_POINTERS* info)
     }
 
 #if defined(_M_IX86)
+    if (g_config.enablePtrNodeExhaustionGuard &&
+        info->ContextRecord &&
+        info->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION &&
+        info->ExceptionRecord->NumberParameters > 1) {
+
+        CONTEXT* ctx = info->ContextRecord;
+        const uintptr_t eip = reinterpret_cast<uintptr_t>(info->ExceptionRecord->ExceptionAddress);
+        const uintptr_t fault = static_cast<uintptr_t>(info->ExceptionRecord->ExceptionInformation[1]);
+        if (eip == kCPtrListSingleAddItemNullWrite && fault == 0x04) {
+            if (SkipFailedPtrNodeListAdd(ctx, "CPtrListSingleLink::AddItem", kPtrNodeSinglePoolPtr, fault, 0x04, 0x08, 0x0C)) {
+                return EXCEPTION_CONTINUE_EXECUTION;
+            }
+        } else if (eip == kCPtrListDoubleAddItemNullWrite && fault == 0x08) {
+            if (SkipFailedPtrNodeListAdd(ctx, "CPtrListDoubleLink::AddItem", kPtrNodeDoublePoolPtr, fault, 0x04, 0x08, 0x0C)) {
+                return EXCEPTION_CONTINUE_EXECUTION;
+            }
+        } else if (eip == kCQuadTreeNodeAddItemNullWrite && fault == 0x04) {
+            if (SkipFailedPtrNodeListAdd(ctx, "CQuadTreeNode::AddItem", kPtrNodeSinglePoolPtr, fault, 0x14, 0x18, 0x20)) {
+                return EXCEPTION_CONTINUE_EXECUTION;
+            }
+        }
+    }
+
     if (g_config.enablePlaceableRemoveMatrixGuard &&
         g_config.enablePlaceableRemoveMatrixSkipGuard &&
         info->ContextRecord &&
@@ -10702,6 +14586,71 @@ LONG CALLBACK BridgeVectoredExceptionHandler(EXCEPTION_POINTERS* info)
         }
     }
 
+    if (g_config.enableReplayPoolReadSkipGuard &&
+        info->ContextRecord &&
+        info->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION &&
+        info->ExceptionRecord->NumberParameters > 1) {
+
+        CONTEXT* ctx = info->ContextRecord;
+        const uintptr_t eip = reinterpret_cast<uintptr_t>(info->ExceptionRecord->ExceptionAddress);
+        const uintptr_t fault = static_cast<uintptr_t>(info->ExceptionRecord->ExceptionInformation[1]);
+
+        if (eip == kCReplayMarkEverythingAsNewPedPoolRead && ctx->Edx == 0 && fault == 0x08) {
+            if (SkipReplayMarkEverythingAsNew(ctx, "Ped pool is null", false)) {
+                return EXCEPTION_CONTINUE_EXECUTION;
+            }
+            return EXCEPTION_CONTINUE_SEARCH;
+        }
+
+        if (eip == kCReplayMarkEverythingAsNewVehiclePoolRead && ctx->Esi == 0 && fault == 0x08) {
+            if (SkipReplayMarkEverythingAsNew(ctx, "Vehicle pool is null", true)) {
+                return EXCEPTION_CONTINUE_EXECUTION;
+            }
+            return EXCEPTION_CONTINUE_SEARCH;
+        }
+    }
+
+    if (g_config.enableLazyCPoolRegistry &&
+        info->ContextRecord &&
+        info->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION &&
+        info->ExceptionRecord->NumberParameters > 1) {
+
+        CONTEXT* ctx = info->ContextRecord;
+        const uintptr_t eip = reinterpret_cast<uintptr_t>(info->ExceptionRecord->ExceptionAddress);
+        const uintptr_t fault = static_cast<uintptr_t>(info->ExceptionRecord->ExceptionInformation[1]);
+
+        if ((eip == kCPtrNodeSingleLinkPoolNewEntry || eip == kCPtrNodeDoubleLinkPoolNewEntry) &&
+            ctx->Ecx == 0 && fault == 0x08) {
+            TryEnsureCPoolsInitialised("CPtrNode pool allocation early core pool recovery", g_config.enableEarlyCPoolsInitialiseRecovery);
+            const uintptr_t poolPtrAddress = eip == kCPtrNodeSingleLinkPoolNewEntry
+                ? kPtrNodeSinglePoolPtr
+                : kPtrNodeDoublePoolPtr;
+            const char* reason = eip == kCPtrNodeSingleLinkPoolNewEntry
+                ? "CPtrNodeSingleLinkPool::New"
+                : "CPtrNodeDoubleLinkPool::New";
+
+            EnsureBatchLazyCPoolsInitialised(reason);
+            if (EnsureLazyCPoolReady(poolPtrAddress, reason)) {
+                uint32_t pool = 0;
+                SafeReadU32(poolPtrAddress, &pool);
+                if (IsValidCPool(pool)) {
+                    static LONG logCount = 0;
+                    const LONG count = InterlockedIncrement(&logCount);
+                    if (count <= 16) {
+                        Log("ptrnode pool guard: supplied lazy pool eip=0x%08X poolPtr=0x%08X pool=0x%08X return=0x%08X",
+                            eip,
+                            poolPtrAddress,
+                            pool,
+                            IsReadableCommitted(ctx->Esp, sizeof(uintptr_t)) ? *reinterpret_cast<uintptr_t*>(ctx->Esp) : 0);
+                        LogStackModules(ctx->Esp);
+                    }
+                    ctx->Ecx = pool;
+                    return EXCEPTION_CONTINUE_EXECUTION;
+                }
+            }
+        }
+    }
+
     if (g_config.enableLazyCPoolRegistry &&
         info->ContextRecord &&
         info->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION &&
@@ -10711,6 +14660,7 @@ LONG CALLBACK BridgeVectoredExceptionHandler(EXCEPTION_POINTERS* info)
         CONTEXT* ctx = info->ContextRecord;
         const uintptr_t fault = static_cast<uintptr_t>(info->ExceptionRecord->ExceptionInformation[1]);
         if (ctx->Ecx == 0 && fault == 0x08) {
+            EnsureBatchLazyCPoolsInitialised("CBuildingPool::New");
             if (EnsureLazyCPoolReady(kOriginalBuildingPoolPtr, "CBuildingPool::New")) {
                 uint32_t pool = 0;
                 SafeReadU32(kOriginalBuildingPoolPtr, &pool);
@@ -10721,6 +14671,180 @@ LONG CALLBACK BridgeVectoredExceptionHandler(EXCEPTION_POINTERS* info)
                         Log("building pool guard: supplied lazy pool eip=0x%08X pool=0x%08X return=0x%08X",
                             kCBuildingPoolNewEntry,
                             pool,
+                            IsReadableCommitted(ctx->Esp, sizeof(uintptr_t)) ? *reinterpret_cast<uintptr_t*>(ctx->Esp) : 0);
+                        LogStackModules(ctx->Esp);
+                    }
+                    ctx->Ecx = pool;
+                    return EXCEPTION_CONTINUE_EXECUTION;
+                }
+            }
+        }
+    }
+
+    if (g_config.enableLazyCPoolRegistry &&
+        info->ContextRecord &&
+        info->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION &&
+        info->ExceptionRecord->ExceptionAddress == reinterpret_cast<void*>(kCDummyPoolNewEntry) &&
+        info->ExceptionRecord->NumberParameters > 1) {
+
+        CONTEXT* ctx = info->ContextRecord;
+        const uintptr_t fault = static_cast<uintptr_t>(info->ExceptionRecord->ExceptionInformation[1]);
+        if (ctx->Ecx == 0 && fault == 0x08) {
+            EnsureBatchLazyCPoolsInitialised("CDummyPool::New");
+            if (EnsureLazyCPoolReady(kOriginalDummyPoolPtr, "CDummyPool::New")) {
+                uint32_t pool = 0;
+                SafeReadU32(kOriginalDummyPoolPtr, &pool);
+                if (IsValidCPool(pool)) {
+                    static LONG logCount = 0;
+                    const LONG count = InterlockedIncrement(&logCount);
+                    if (count <= 16) {
+                        uint32_t poolSize = 0;
+                        uint32_t firstFree = 0;
+                        SafeReadU32(pool + 0x08, &poolSize);
+                        SafeReadU32(pool + 0x0C, &firstFree);
+                        Log("dummy pool guard: supplied lazy pool eip=0x%08X pool=0x%08X size=%u firstFree=%u return=0x%08X",
+                            kCDummyPoolNewEntry,
+                            pool,
+                            poolSize,
+                            firstFree,
+                            IsReadableCommitted(ctx->Esp, sizeof(uintptr_t)) ? *reinterpret_cast<uintptr_t*>(ctx->Esp) : 0);
+                        LogStackModules(ctx->Esp);
+                    }
+                    ctx->Ecx = pool;
+                    return EXCEPTION_CONTINUE_EXECUTION;
+                }
+            }
+        }
+    }
+
+    if (g_config.enableLazyCPoolRegistry &&
+        info->ContextRecord &&
+        info->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION &&
+        info->ExceptionRecord->ExceptionAddress == reinterpret_cast<void*>(kCIplStoreRemoveIplObjectPoolRead) &&
+        info->ExceptionRecord->NumberParameters > 1) {
+
+        CONTEXT* ctx = info->ContextRecord;
+        const uintptr_t fault = static_cast<uintptr_t>(info->ExceptionRecord->ExceptionInformation[1]);
+        if (ctx->Eax == 0 && fault == 0x08) {
+            EnsureBatchLazyCPoolsInitialised("CIplStore::RemoveIpl");
+            if (EnsureLazyCPoolReady(kOriginalObjectPoolPtr, "CIplStore::RemoveIpl")) {
+                uint32_t pool = 0;
+                SafeReadU32(kOriginalObjectPoolPtr, &pool);
+                if (IsValidCPool(pool)) {
+                    static LONG logCount = 0;
+                    const LONG count = InterlockedIncrement(&logCount);
+                    if (count <= 16) {
+                        uint32_t poolSize = 0;
+                        uint32_t firstFree = 0;
+                        SafeReadU32(pool + 0x08, &poolSize);
+                        SafeReadU32(pool + 0x0C, &firstFree);
+                        Log("object pool guard: supplied lazy pool eip=0x%08X pool=0x%08X size=%u firstFree=%u return=0x%08X",
+                            kCIplStoreRemoveIplObjectPoolRead,
+                            pool,
+                            poolSize,
+                            firstFree,
+                            IsReadableCommitted(ctx->Esp, sizeof(uintptr_t)) ? *reinterpret_cast<uintptr_t*>(ctx->Esp) : 0);
+                        LogStackModules(ctx->Esp);
+                    }
+                    ctx->Eax = pool;
+                    return EXCEPTION_CONTINUE_EXECUTION;
+                }
+            }
+        }
+    }
+
+    if (!g_config.enableReplayPoolReadSkipGuard &&
+        g_config.enableLazyCPoolRegistry &&
+        info->ContextRecord &&
+        info->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION &&
+        info->ExceptionRecord->NumberParameters > 1) {
+
+        CONTEXT* ctx = info->ContextRecord;
+        const uintptr_t eip = reinterpret_cast<uintptr_t>(info->ExceptionRecord->ExceptionAddress);
+        const uintptr_t fault = static_cast<uintptr_t>(info->ExceptionRecord->ExceptionInformation[1]);
+
+        if (eip == kCReplayMarkEverythingAsNewPedPoolRead && ctx->Edx == 0 && fault == 0x08) {
+            EnsureBatchLazyCPoolsInitialised("CReplay::MarkEverythingAsNew");
+            EnsureLazyCPoolReady(kOriginalVehiclePoolPtr, "CReplay::MarkEverythingAsNew prerequisite");
+            if (EnsureLazyCPoolReady(kOriginalPedPoolPtr, "CReplay::MarkEverythingAsNew")) {
+                uint32_t pool = 0;
+                SafeReadU32(kOriginalPedPoolPtr, &pool);
+                if (IsValidCPool(pool)) {
+                    static LONG logCount = 0;
+                    const LONG count = InterlockedIncrement(&logCount);
+                    if (count <= 16) {
+                        uint32_t poolSize = 0;
+                        uint32_t firstFree = 0;
+                        SafeReadU32(pool + 0x08, &poolSize);
+                        SafeReadU32(pool + 0x0C, &firstFree);
+                        Log("replay pool guard: supplied lazy Ped pool eip=0x%08X pool=0x%08X size=%u firstFree=%u return=0x%08X",
+                            eip,
+                            pool,
+                            poolSize,
+                            firstFree,
+                            IsReadableCommitted(ctx->Esp, sizeof(uintptr_t)) ? *reinterpret_cast<uintptr_t*>(ctx->Esp) : 0);
+                        LogStackModules(ctx->Esp);
+                    }
+                    ctx->Edx = pool;
+                    return EXCEPTION_CONTINUE_EXECUTION;
+                }
+            }
+        }
+
+        if (eip == kCReplayMarkEverythingAsNewVehiclePoolRead && ctx->Esi == 0 && fault == 0x08) {
+            EnsureBatchLazyCPoolsInitialised("CReplay::MarkEverythingAsNew");
+            if (EnsureLazyCPoolReady(kOriginalVehiclePoolPtr, "CReplay::MarkEverythingAsNew")) {
+                uint32_t pool = 0;
+                SafeReadU32(kOriginalVehiclePoolPtr, &pool);
+                if (IsValidCPool(pool)) {
+                    static LONG logCount = 0;
+                    const LONG count = InterlockedIncrement(&logCount);
+                    if (count <= 16) {
+                        uint32_t poolSize = 0;
+                        uint32_t firstFree = 0;
+                        SafeReadU32(pool + 0x08, &poolSize);
+                        SafeReadU32(pool + 0x0C, &firstFree);
+                        Log("replay pool guard: supplied lazy Vehicle pool eip=0x%08X pool=0x%08X size=%u firstFree=%u return=0x%08X",
+                            eip,
+                            pool,
+                            poolSize,
+                            firstFree,
+                            IsReadableCommitted(ctx->Esp, sizeof(uintptr_t)) ? *reinterpret_cast<uintptr_t*>(ctx->Esp) : 0);
+                        LogStackModules(ctx->Esp);
+                    }
+                    ctx->Esi = pool;
+                    return EXCEPTION_CONTINUE_EXECUTION;
+                }
+            }
+        }
+    }
+
+    if (g_config.enableLazyCPoolRegistry &&
+        info->ContextRecord &&
+        info->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION &&
+        info->ExceptionRecord->ExceptionAddress == reinterpret_cast<void*>(kCEntryInfoNodePoolNewEntry) &&
+        info->ExceptionRecord->NumberParameters > 1) {
+
+        CONTEXT* ctx = info->ContextRecord;
+        const uintptr_t fault = static_cast<uintptr_t>(info->ExceptionRecord->ExceptionInformation[1]);
+        if (ctx->Ecx == 0 && fault == 0x08) {
+            EnsureBatchLazyCPoolsInitialised("CEntryInfoNodePool::New");
+            if (EnsureLazyCPoolReady(kEntryInfoNodePoolPtr, "CEntryInfoNodePool::New")) {
+                uint32_t pool = 0;
+                SafeReadU32(kEntryInfoNodePoolPtr, &pool);
+                if (IsValidCPool(pool)) {
+                    static LONG logCount = 0;
+                    const LONG count = InterlockedIncrement(&logCount);
+                    if (count <= 16) {
+                        uint32_t poolSize = 0;
+                        uint32_t firstFree = 0;
+                        SafeReadU32(pool + 0x08, &poolSize);
+                        SafeReadU32(pool + 0x0C, &firstFree);
+                        Log("entry info node pool guard: supplied lazy pool eip=0x%08X pool=0x%08X size=%u firstFree=%u return=0x%08X",
+                            kCEntryInfoNodePoolNewEntry,
+                            pool,
+                            poolSize,
+                            firstFree,
                             IsReadableCommitted(ctx->Esp, sizeof(uintptr_t)) ? *reinterpret_cast<uintptr_t*>(ctx->Esp) : 0);
                         LogStackModules(ctx->Esp);
                     }
@@ -10800,6 +14924,64 @@ LONG CALLBACK BridgeVectoredExceptionHandler(EXCEPTION_POINTERS* info)
     if (g_config.enableLazyCPoolRegistry &&
         info->ContextRecord &&
         info->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION &&
+        info->ExceptionRecord->NumberParameters > 1) {
+
+        CONTEXT* ctx = info->ContextRecord;
+        const uintptr_t eip = reinterpret_cast<uintptr_t>(info->ExceptionRecord->ExceptionAddress);
+        const uintptr_t fault = static_cast<uintptr_t>(info->ExceptionRecord->ExceptionInformation[1]);
+
+        uintptr_t routePoolPtr = 0;
+        const char* routeReason = nullptr;
+        if (eip == kCEventPoolNewEntry) {
+            routePoolPtr = kEventsPoolPtr;
+            routeReason = "CEventPool::New";
+        } else if (eip == kCPointRoutePoolNewEntry) {
+            routePoolPtr = kPointRoutePoolPtr;
+            routeReason = "CPointRoutePool::New";
+        } else if (eip == kCNodeRoutePoolNewEntry) {
+            routePoolPtr = kNodeRoutePoolPtr;
+            routeReason = "CNodeRoutePool::New";
+        } else if (eip == kCTaskAllocatorPoolNewEntry) {
+            routePoolPtr = kTaskAllocatorPoolPtr;
+            routeReason = "CTaskAllocatorPool::New";
+        } else if (eip == kCPedAttractorPoolNewEntry) {
+            routePoolPtr = kPedAttractorsPoolPtr;
+            routeReason = "CPedAttractorPool::New";
+        }
+
+        if (routePoolPtr && ctx->Ecx == 0 && fault == 0x08) {
+            EnsureBatchLazyCPoolsInitialised(routeReason);
+            if (EnsureLazyCPoolReady(routePoolPtr, routeReason)) {
+                uint32_t pool = 0;
+                SafeReadU32(routePoolPtr, &pool);
+                if (IsValidCPool(pool)) {
+                    static LONG logCount = 0;
+                    const LONG count = InterlockedIncrement(&logCount);
+                    if (count <= 16) {
+                        uint32_t poolSize = 0;
+                        uint32_t firstFree = 0;
+                        SafeReadU32(pool + 0x08, &poolSize);
+                        SafeReadU32(pool + 0x0C, &firstFree);
+                        Log("late CPool guard: supplied lazy pool reason=%s eip=0x%08X poolPtr=0x%08X pool=0x%08X size=%u firstFree=%u return=0x%08X",
+                            routeReason,
+                            eip,
+                            routePoolPtr,
+                            pool,
+                            poolSize,
+                            firstFree,
+                            IsReadableCommitted(ctx->Esp, sizeof(uintptr_t)) ? *reinterpret_cast<uintptr_t*>(ctx->Esp) : 0);
+                        LogStackModules(ctx->Esp);
+                    }
+                    ctx->Ecx = pool;
+                    return EXCEPTION_CONTINUE_EXECUTION;
+                }
+            }
+        }
+    }
+
+    if (g_config.enableLazyCPoolRegistry &&
+        info->ContextRecord &&
+        info->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION &&
         info->ExceptionRecord->ExceptionAddress == reinterpret_cast<void*>(kGenericPoolNewEntry) &&
         info->ExceptionRecord->NumberParameters > 1) {
 
@@ -10851,6 +15033,30 @@ LONG CALLBACK BridgeVectoredExceptionHandler(EXCEPTION_POINTERS* info)
         CONTEXT* ctx = info->ContextRecord;
         const uintptr_t fault = static_cast<uintptr_t>(info->ExceptionRecord->ExceptionInformation[1]);
         if (fault == ctx->Eax + 0x08) {
+            if (ctx->Eax == 0 && TryEnsureCPoolsInitialised("CColAccel::startCache early core pool recovery", g_config.enableEarlyCPoolsInitialiseRecovery)) {
+                uint32_t colModelPool = 0;
+                SafeReadU32(kOriginalColModelPoolPtr, &colModelPool);
+                if (IsValidCPool(colModelPool)) {
+                    const LONG logCount = InterlockedIncrement(&g_colAccelStartCachePoolGuardLogs);
+                    if (logCount <= 16) {
+                        uint32_t ped = 0;
+                        uint32_t vehicle = 0;
+                        uint32_t object = 0;
+                        SafeReadU32(kOriginalPedPoolPtr, &ped);
+                        SafeReadU32(kOriginalVehiclePoolPtr, &vehicle);
+                        SafeReadU32(kOriginalObjectPoolPtr, &object);
+                        Log("col accel guard: early CPools recovery produced core pools eip=0x%08X ped=0x%08X vehicle=0x%08X object=0x%08X colModel=0x%08X",
+                            kCColAccelStartCachePoolRead,
+                            ped,
+                            vehicle,
+                            object,
+                            colModelPool);
+                    }
+                    ctx->Eax = colModelPool;
+                    return EXCEPTION_CONTINUE_EXECUTION;
+                }
+            }
+
             if (ctx->Eax == 0 && EnsureLazyCPoolReady(kOriginalColModelPoolPtr, "CColAccel::startCache")) {
                 uint32_t colModelPool = 0;
                 SafeReadU32(kOriginalColModelPoolPtr, &colModelPool);
@@ -10978,60 +15184,49 @@ LONG CALLBACK BridgeVectoredExceptionHandler(EXCEPTION_POINTERS* info)
         return EXCEPTION_CONTINUE_EXECUTION;
     }
 
-    if (g_config.enableBoundCentreVehRecovery &&
+    if (g_config.enableShouldModelBeStreamedGuard &&
         info->ContextRecord &&
         info->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION &&
-        info->ExceptionRecord->ExceptionAddress == reinterpret_cast<void*>(0x0053368B) &&
+        info->ExceptionRecord->ExceptionAddress == reinterpret_cast<void*>(0x00554F62) &&
         info->ExceptionRecord->NumberParameters > 1 &&
-        static_cast<uintptr_t>(info->ExceptionRecord->ExceptionInformation[1]) == 0x8) {
+        static_cast<uintptr_t>(info->ExceptionRecord->ExceptionInformation[1]) < 0x10000) {
+
+        CONTEXT* ctx = info->ContextRecord;
+        __asm {
+            fstp st(0)
+        }
+        Bridge_LogInvalidShouldModelBeStreamedColModel(ctx->Esi, ctx->Edi, ctx->Eax, ctx->Esp);
+        ctx->Eip = 0x00554F76;
+        return EXCEPTION_CONTINUE_EXECUTION;
+    }
+
+#endif
+
+    if (g_config.enableRpAnimBlendClumpInitGuard &&
+        info->ContextRecord &&
+        info->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION &&
+        info->ExceptionRecord->ExceptionAddress == reinterpret_cast<void*>(kRpAnimBlendAllocateDataWrite) &&
+        info->ExceptionRecord->NumberParameters > 1 &&
+        static_cast<uintptr_t>(info->ExceptionRecord->ExceptionInformation[1]) < 0x10000) {
 
         CONTEXT* ctx = info->ContextRecord;
         static LONG recoverCount = 0;
         const LONG count = InterlockedIncrement(&recoverCount);
-        if (count <= 6) {
-            uintptr_t returnAddress = 0;
-            if (IsReadableCommitted(ctx->Esp, sizeof(returnAddress))) {
-                __try {
-                    returnAddress = *reinterpret_cast<const uintptr_t*>(ctx->Esp);
-                }
-                __except (EXCEPTION_EXECUTE_HANDLER) {
-                    returnAddress = 0;
-                }
-            }
-
-            Log("bound centre VEH: redirected null out at 0x0053368B scratch=0x%08X eax=0x%08X ecx=0x%08X edx=0x%08X esi=0x%08X edi/model=%u return=0x%08X esp=0x%08X",
-                reinterpret_cast<uintptr_t>(g_boundCentreScratch),
+        if (count <= 16) {
+            Log("rp anim allocate VEH: skipped invalid plugin write eip=0x%08X fault=0x%08X eax=0x%08X edx=0x%08X ecx=0x%08X esp=0x%08X",
+                ctx->Eip,
+                static_cast<uintptr_t>(info->ExceptionRecord->ExceptionInformation[1]),
                 ctx->Eax,
-                ctx->Ecx,
                 ctx->Edx,
-                ctx->Esi,
-                ctx->Edi,
-                returnAddress,
+                ctx->Ecx,
                 ctx->Esp);
             LogStackModules(ctx->Esp);
-            if (ctx->Edi < kOriginalCModelInfoCount) {
-                DumpModelContext(ctx->Edi);
-            }
         }
 
-        const bool rwLoaded = ctx->Edi < kOriginalCModelInfoCount && IsModelRwObjectLoaded(ctx->Edi);
-        const bool isolatedModel86 = ctx->Edi == 86;
-        if (rwLoaded || isolatedModel86) {
-            g_boundCentreScratch[0] = 0;
-            g_boundCentreScratch[1] = 0;
-            g_boundCentreScratch[2] = 0;
-            g_boundCentreScratch[3] = 0;
-            ctx->Eax = reinterpret_cast<DWORD>(g_boundCentreScratch);
-            Log("bound centre VEH: recovered null output pointer with scratch model=%u rwLoaded=%u isolated86=%u",
-                ctx->Edi, rwLoaded ? 1 : 0, isolatedModel86 ? 1 : 0);
-            return EXCEPTION_CONTINUE_EXECUTION;
-        }
-
-        Log("bound centre VEH: not recovering; model=%u is not rwLoaded, avoiding loading soft hang",
-            ctx->Edi);
-        return EXCEPTION_CONTINUE_SEARCH;
+        ctx->Eax = 0;
+        ctx->Eip = 0x004D5F72;
+        return EXCEPTION_CONTINUE_EXECUTION;
     }
-#endif
 
     if (g_config.enableAnimFrameUpdateGuard &&
         info->ContextRecord &&
@@ -11336,13 +15531,34 @@ void InstallProperShadersVtableGuard()
 void ApplyProperShadersCompat()
 {
 #if defined(_M_IX86)
-    uint32_t flaNewValue = 0;
-    if (!SafeReadU32(0x848B9D + 3, &flaNewValue) ||
-        flaNewValue == kOriginalCModelInfoPtrs ||
-        flaNewValue < 0x00400000 ||
-        flaNewValue > 0x80000000) {
-        Log("proper shaders compat: FLA CModelInfo relocation not detected (probed 0x%08X), skipping",
-            flaNewValue);
+    uint32_t probedValue = 0;
+    const bool probeOk = SafeReadU32(0x848B9D + 3, &probedValue);
+    const uint32_t runtimeValue = static_cast<uint32_t>(g_relocatedCModelInfoPtrs);
+    const uint32_t runtimeStreamingValue = static_cast<uint32_t>(g_relocatedStreamingInfo);
+
+    auto isUsableCModelInfoTable = [](uint32_t value) -> bool {
+        return value != 0 &&
+            value != kOriginalCModelInfoPtrs &&
+            value >= 0x00400000 &&
+            IsReadableCommitted(value, sizeof(uintptr_t));
+    };
+    auto isUsableStreamingTable = [](uint32_t value) -> bool {
+        return value != 0 &&
+            value != kOriginalStreamingInfo &&
+            value >= 0x00400000 &&
+            IsReadableCommitted(value, sizeof(uintptr_t));
+    };
+
+    const char* source = "runtime";
+    uint32_t flaNewValue = runtimeValue;
+    if (!isUsableCModelInfoTable(flaNewValue)) {
+        source = "probe";
+        flaNewValue = probedValue;
+    }
+
+    if (!isUsableCModelInfoTable(flaNewValue)) {
+        Log("proper shaders compat: FLA CModelInfo relocation not detected, skipping (runtime=0x%08X probed=0x%08X probeOk=%u)",
+            runtimeValue, probedValue, probeOk ? 1u : 0u);
         return;
     }
 
@@ -11362,8 +15578,72 @@ void ApplyProperShadersCompat()
         }
     }
 
-    Log("proper shaders compat: scanned 0x%08X-0x%08X, restored %u CModelInfo pointer patches (0x%08X -> 0x%08X)",
-        kRenderRangeStart, kRenderRangeEnd, restored, flaNewValue, kOriginalCModelInfoPtrs);
+    Log("proper shaders compat: source=%s scanned 0x%08X-0x%08X, restored %u CModelInfo pointer patches (0x%08X -> 0x%08X, runtime=0x%08X probed=0x%08X probeOk=%u)",
+        source, kRenderRangeStart, kRenderRangeEnd, restored, flaNewValue, kOriginalCModelInfoPtrs,
+        runtimeValue, probedValue, probeOk ? 1u : 0u);
+
+    HMODULE psAsi = GetModuleHandleA("ProperShaders.asi");
+    if (!psAsi) {
+        psAsi = GetModuleHandleA("propershaders.asi");
+    }
+    if (!psAsi || !isUsableStreamingTable(runtimeStreamingValue)) {
+        Log("proper shaders compat: PS CStreaming patch skipped module=0x%p runtimeStreaming=0x%08X",
+            psAsi, runtimeStreamingValue);
+        return;
+    }
+
+    uintptr_t psBase = reinterpret_cast<uintptr_t>(psAsi);
+    IMAGE_DOS_HEADER* dos = reinterpret_cast<IMAGE_DOS_HEADER*>(psBase);
+    if (!IsReadableCommitted(psBase, sizeof(IMAGE_DOS_HEADER)) || dos->e_magic != IMAGE_DOS_SIGNATURE) {
+        Log("proper shaders compat: PS CStreaming patch skipped invalid DOS header base=0x%08X", psBase);
+        return;
+    }
+
+    uintptr_t ntAddress = psBase + static_cast<uintptr_t>(dos->e_lfanew);
+    IMAGE_NT_HEADERS* nt = reinterpret_cast<IMAGE_NT_HEADERS*>(ntAddress);
+    if (!IsReadableCommitted(ntAddress, sizeof(IMAGE_NT_HEADERS)) || nt->Signature != IMAGE_NT_SIGNATURE) {
+        Log("proper shaders compat: PS CStreaming patch skipped invalid NT header base=0x%08X nt=0x%08X",
+            psBase, ntAddress);
+        return;
+    }
+
+    const uintptr_t psEnd = psBase + nt->OptionalHeader.SizeOfImage;
+    uint32_t streamingPatched = 0;
+    uint32_t streamingAlready = 0;
+    uint32_t streamingCandidates = 0;
+    for (uintptr_t addr = psBase + 1; addr + 4 <= psEnd; ++addr) {
+        uint32_t val = 0;
+        if (!SafeReadU32(addr, &val)) {
+            continue;
+        }
+        if (val != kOriginalStreamingInfo && val != runtimeStreamingValue) {
+            continue;
+        }
+
+        uint8_t opcode = 0;
+        if (!SafeReadU8(addr - 1, &opcode) || opcode != 0xB9) {
+            continue;
+        }
+
+        ++streamingCandidates;
+        if (val == runtimeStreamingValue) {
+            ++streamingAlready;
+            continue;
+        }
+
+        if (WriteBytesWithProtect(addr, reinterpret_cast<const uint8_t*>(&runtimeStreamingValue), sizeof(runtimeStreamingValue))) {
+            ++streamingPatched;
+        }
+    }
+
+    Log("proper shaders compat: PS CStreaming scan module=0x%08X size=0x%X patched=%u already=%u candidates=%u (0x%08X -> 0x%08X)",
+        psBase,
+        nt->OptionalHeader.SizeOfImage,
+        streamingPatched,
+        streamingAlready,
+        streamingCandidates,
+        kOriginalStreamingInfo,
+        runtimeStreamingValue);
 #endif
 }
 
@@ -11635,6 +15915,9 @@ DWORD WINAPI BridgeThread(void*)
         GetModuleHandleA("DINPUT8Hooked.dll"),
         GetModuleHandleA("vorbisFile.dll"),
         GetModuleHandleA("vorbisHooked.dll"));
+    GuardOpenLimitAdjusterModuleLoad("bridge-thread");
+    GuardOpenLimitAdjusterSaLimits("bridge-thread");
+    RepairOpenLimitAdjusterSaPoolHooks("bridge-thread");
     AuditOpenLimitAdjusterSaOverlaps();
 
     LogIniValue("Apply ID limit patch");
@@ -11645,7 +15928,13 @@ DWORD WINAPI BridgeThread(void*)
     LogIniValue("FILE_TYPE_IFP");
     LogIniValue("FILE_TYPE_RRR");
     LogIniValue("FILE_TYPE_SCM");
+    LogIniValue("PtrNode Singles");
+    LogIniValue("PtrNode Doubles");
+    LogIniValue("EntryInfoNodes");
     LogIniValue("Count of killable model IDs");
+    LogFlaPathNodeDiagnostics();
+    InstallStreamingBusyThresholdPatch();
+    InstallPopulationUpdateBudgetPatch();
 
     LogFLAExports();
     RefreshFlaRuntimeState();
@@ -11658,7 +15947,34 @@ DWORD WINAPI BridgeThread(void*)
     }
     LogRelocatedAddressDiagnostics();
     LogPoolPointerDiagnostics();
+    if (g_config.enablePopulationPoolDiagnostics) {
+        HANDLE populationDiagThread = CreateThread(nullptr, 0, PopulationPoolDiagnosticsThread, nullptr, 0, nullptr);
+        if (populationDiagThread) {
+            CloseHandle(populationDiagThread);
+        } else {
+            Log("population diag: thread creation failed gle=%lu", GetLastError());
+        }
+    }
+    if (g_config.enableGangOnlyPopulationGuard) {
+        HANDLE populationGuardThread = CreateThread(nullptr, 0, GangOnlyPopulationGuardThread, nullptr, 0, nullptr);
+        if (populationGuardThread) {
+            CloseHandle(populationGuardThread);
+        } else {
+            Log("population guard: thread creation failed gle=%lu", GetLastError());
+        }
+    }
+    if (g_config.enablePedStreamingZoneRepair) {
+        HANDLE pedZoneRepairThread = CreateThread(nullptr, 0, PedStreamingZoneRepairThread, nullptr, 0, nullptr);
+        if (pedZoneRepairThread) {
+            CloseHandle(pedZoneRepairThread);
+        } else {
+            Log("ped zone repair: thread creation failed gle=%lu", GetLastError());
+        }
+    }
     RuntimeRewriteHardcodedAddressConstants();
+    if (g_config.enableProperShadersCompat) {
+        ApplyProperShadersCompat();
+    }
     if (g_config.enableRuntimeRewriteRescan) {
         HANDLE rewriteThread = CreateThread(nullptr, 0, RuntimeRewriteRescanThread, nullptr, 0, nullptr);
         if (rewriteThread) {
@@ -11675,6 +15991,9 @@ DWORD WINAPI BridgeThread(void*)
     }
     if (g_config.enableGetBoundRectColModelGuard) {
         InstallGetBoundRectColModelGuard();
+    }
+    if (g_config.enableShouldModelBeStreamedGuard) {
+        InstallShouldModelBeStreamedGuard();
     }
     if (g_config.enableBridgeCheatStringLoader) {
         LoadBridgeCheatStrings();
@@ -11722,9 +16041,30 @@ DWORD WINAPI BridgeThread(void*)
     }
     if (g_config.enableMixSetsPoolAllocateGuard) {
         InstallMixSetsPoolAllocateGuard();
+        HANDLE mixSetsPoolGuardThread = CreateThread(nullptr, 0, MixSetsPoolAllocateGuardInstallThread, nullptr, 0, nullptr);
+        if (mixSetsPoolGuardThread) {
+            CloseHandle(mixSetsPoolGuardThread);
+        } else {
+            Log("MixSets pool allocate guard: delayed install thread creation failed gle=%lu", GetLastError());
+        }
     }
     if (g_config.enableUrbanizePoolAllocateGuard) {
         InstallUrbanizePoolAllocateGuard();
+        HANDLE urbanizePoolGuardThread = CreateThread(nullptr, 0, UrbanizePoolAllocateGuardInstallThread, nullptr, 0, nullptr);
+        if (urbanizePoolGuardThread) {
+            CloseHandle(urbanizePoolGuardThread);
+        } else {
+            Log("Urbanize pool allocate guard: delayed install thread creation failed gle=%lu", GetLastError());
+        }
+    }
+    if (g_config.enableVehFuncsPoolAllocateGuard) {
+        InstallVehFuncsPoolAllocateGuard();
+        HANDLE vehFuncsPoolGuardThread = CreateThread(nullptr, 0, VehFuncsPoolAllocateGuardInstallThread, nullptr, 0, nullptr);
+        if (vehFuncsPoolGuardThread) {
+            CloseHandle(vehFuncsPoolGuardThread);
+        } else {
+            Log("VehFuncs pool allocate guard: delayed install thread creation failed gle=%lu", GetLastError());
+        }
     }
     if (g_config.enableAutoPoolAllocateGuard) {
         InstallAutoPoolAllocateGuards();
@@ -11748,8 +16088,15 @@ DWORD WINAPI BridgeThread(void*)
     }
     if (g_config.enableAnimFrameUpdateGuard) {
         InstallAnimUpdateBlendGuard();
+        InstallAnimBlendGroupGuard();
         InstallAnimFrameUpdateSkinnedGuard();
         InstallAnimFrameUpdateSkinnedVelocityGuard();
+    }
+    if (g_config.enableRpAnimBlendClumpInitGuard) {
+        InstallRpAnimBlendClumpInitGuard();
+    }
+    if (g_config.enableRwClumpForAllAtomicsGuard) {
+        InstallRwClumpForAllAtomicsGuard();
     }
     if (g_config.enableGetBoundCentreInlineGuard) {
         InstallGetBoundCentreNullGuard();
@@ -12100,6 +16447,15 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID)
         DisableThreadLibraryCalls(module);
         InitializeCriticalSection(&g_deferredPoolAllocateLock);
         LoadBridgeConfig();
+        GuardOpenLimitAdjusterModuleLoad("process-attach");
+        GuardOpenLimitAdjusterSaLimits("process-attach");
+        RepairOpenLimitAdjusterSaPoolHooks("process-attach");
+        HANDLE olaRepairThread = CreateThread(nullptr, 0, OpenLimitAdjusterRepairThread, nullptr, 0, nullptr);
+        if (olaRepairThread) {
+            CloseHandle(olaRepairThread);
+        } else {
+            Log("OLA hook repair monitor: thread creation failed gle=%lu", GetLastError());
+        }
         if (g_config.enableVectoredExceptionHandler) {
             AddVectoredExceptionHandler(1, BridgeVectoredExceptionHandler);
         }
