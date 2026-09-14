@@ -6,7 +6,7 @@
 // Load with GetModuleHandleA("FLACompatBridge.asi") and GetProcAddress.
 
 #define FLA_COMPAT_BRIDGE_PRODUCT_NAME "FLA++"
-#define FLA_COMPAT_BRIDGE_PRODUCT_VERSION "1.10c1"
+#define FLA_COMPAT_BRIDGE_PRODUCT_VERSION "1.10c2"
 #define FLA_COMPAT_BRIDGE_API_VERSION 6
 
 enum FLACompatBridgeRelocatedAddress : uint32_t {

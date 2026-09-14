@@ -1,67 +1,66 @@
 FLA++ (FLACompatBridge) Changelog
 ==================================
 
-v1.10c2 - 2026-07-03
+v1.10c2 - 2026-07-11
 --------------------
 - Second release candidate for the v1.10 compatibility feature line.
 
-[Open Limit Adjuster Coexistence Guard]
-- New subsystem: GuardOpenLimitAdjusterModuleLoad, GuardOpenLimitAdjusterSaLimits,
-  AuditOpenLimitAdjusterSaOverlaps, RepairOpenLimitAdjusterSaPoolHooks.
-- Detects whether an SA-limit pool hook belongs to FLA or OLA, restores FLA's
-  patch if OLA has overwritten it, and audits overlapping ownership instead of
-  requiring OLA to be disabled outright.
-- EnableOpenLimitAdjusterSaLimitGuard defaults on; EnableOpenLimitAdjusterModuleGuard
-  and EnableOpenLimitAdjusterOverlapAudit default off.
+[Main-Thread Safety]
+- Deferred ExtendedData pool continuations are no longer invoked by a worker
+  thread. A bounded, validated replay pump now runs from the GTA
+  CStreaming::IsVeryBusy game-thread hook.
+- PedStreamingZoneRepair is diagnostic-only and can no longer call
+  CStreaming::StreamZoneModels off-thread.
+- DllMain now performs only minimal state setup and starts one initialization
+  thread. Configuration I/O, OLA sanitization, VEH registration, and early
+  ProperShaders setup run outside the loader lock.
+- VehFuncs pool-guard polling now starts immediately after configuration and
+  VEH setup, before the delayed compatibility pass, preventing its startup
+  `VehicleExtendedData::AllocateBlocks` call from racing the guard installer.
+- Bridge configuration and logging now use absolute paths rooted at
+  `gta_sa.exe`, with bounded startup retries for transient config-open races.
+- The deferred replay pump now chains the verified Hoodlum
+  `CStreaming::IsVeryBusy` target used by FLA instead of abandoning the pump
+  when FLA has already redirected the vanilla entry point.
+- A signature-checked `CPools::Initialise` tail hook runs two bounded replay
+  batches after the original function returns. Explicit main-thread CPools
+  recovery and successful lazy pool creation use the same path, covering FLA
+  setups that create the core pools individually and startup phases that do not
+  call `CStreaming::IsVeryBusy`.
+- VehFuncs discovery now requires the exact `VehFuncs.asi` module name; a
+  `gsx.asi` loaded from the `modloader\\VehFuncs` directory can no longer be
+  mistaken for VehFuncs and patched at its fallback RVA.
 
-[VehFuncs Pool Allocate Guard]
-- Extended the existing targeted PoolAllocateGuard pattern-scanning
-  (previously CLEO+/MixSets/Urbanize only) to VehFuncs.
-- This is narrower than RuntimeRewrite: VehFuncs stays denied for
-  RuntimeRewrite and AutoPoolGuard, only the specific AllocateBlocks guard
-  is opted in.
+[Animation and Exception Recovery]
+- Invalid animation frame node arrays now reject the current frame without
+  truncating live game-owned arrays.
+- Fixed the velocity-frame guard flag preservation and removed the incorrect
+  x87 fstp from the ShouldModelBeStreamed exception recovery path.
+- Exact-EIP render/animation recovery now accepts stale high addresses while
+  still checking the access type.
 
-[Animation & RenderWare Crash Guards]
-- New guards: AnimBlendGroup, RpAnimBlendClumpInit, RwClumpForAllAtomics,
-  and CRenderer::ShouldModelBeStreamed collision-model validation
-  (Bridge_LogInvalidShouldModelBeStreamedColModel).
-- All four enabled by default; target null/corrupt clump and collision-model
-  access from partially streamed or loaded entities.
+[OLA Coexistence]
+- OLA identification now requires the exact III.VC.SA.LimitAdjuster.asi base
+  name and no longer matches $fastman92limitAdjuster.asi.
+- Removed runtime restoration of hard-coded vanilla pool-hook bytes. OLA
+  overlap handling is performed by pre-load INI sanitization so active FLA
+  hooks are not destroyed.
 
-[Streaming Busy Threshold & Population Update Budget Patches]
-- InstallStreamingBusyThresholdPatch and InstallPopulationUpdateBudgetPatch,
-  tunable via StreamingBusyThreshold and PopulationBudgetMs.
-- Detects an existing hook at the population budget patch address first and
-  skips patching to avoid breaking an existing hook chain.
+[ProperShaders Coexistence]
+- Replaced the destructive AddTxdSlot overlap workaround with a combined tail
+  adapter that executes both the FLA TXD hash-registration thunk and the
+  ProperShaders callback with their expected register/stack contracts.
+- Removed the scan that rewrote FLA-relocated GTA CModelInfo pointers back to
+  vanilla addresses.
+- Fixed-RVA ProperShaders patches and executable CStreaming rewrites are now
+  gated by the verified ProperShaders text hash and byte signatures.
 
-[Ped Streaming Zone Repair + Gang-Only Population Guard]
-- New watchdog threads (PedStreamingZoneRepairThread, GangOnlyPopulationGuardThread)
-  for zone-based streaming and ped population edge cases.
-
-[Batch Lazy CPool Initialise]
-- AreCorePoolsReadyForDeferredReplay and EnsureBatchLazyCPoolsInitialised add a
-  batch-ready check ahead of deferred PoolAllocateGuard replay.
-- EnableBatchLazyCPoolInitialise defaults off; this stays opt-in pending
-  further testing, consistent with the project's stability doctrine of not
-  defaulting to broad automatic recovery paths.
-
-[ProperShaders CStreaming Image Rewrite]
-- ApplyProperShadersCompat now also scans the ProperShaders module image
-  itself for embedded CStreaming::ms_aInfoForModel references and rewrites
-  them to the FLA-relocated address, in addition to the existing CModelInfo
-  render-range table repair.
-- Added runtime/probe source fallback logging so the value source
-  (FLA runtime state vs. instruction-operand probe) is auditable.
-
-[FLA Path Node Diagnostics]
-- Optional scan of loose path node (.dat) files (EnableFlaPathNodeDiagnostics,
-  default off) for diagnosing node ID conflicts.
-
-[Modloader INI Parsing Helpers]
-- Internal .ini section/key parsing helpers (ExtractIniSectionName,
-  ExtractIniKeyName, ExtractModloaderIgnoreEntry) shared by the OLA guard
-  and other modloader-aware audits.
-
+[Release Defaults]
+- RuntimeRewrite is disabled and code-enforced to executable pages only.
+- Ped streaming repair and population-budget override are disabled; the
+  population comparison remains at the vanilla 4 ms default.
+- Deferred targeted pool replay is enabled in both the generated configuration
+  and compiled fallback so a guarded allocation cannot be silently discarded.
 - No API or export changes; API version remains 6.
 
 v1.10c1 - 2026-06-12

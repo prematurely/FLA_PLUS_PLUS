@@ -5,6 +5,7 @@
 #include <intrin.h>
 #pragma comment(lib, "Psapi.lib")
 
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -33,10 +34,22 @@
 
 namespace {
 constexpr const char* kDisplayName = "FLA++";
-constexpr const char* kProductVersion = "1.10c1";
+constexpr const char* kProductVersion = "1.10c2";
 constexpr uint32_t kApiVersion = 6;
-constexpr const char* kLogPath = "scripts\\FLACompatBridge.log";
-constexpr const char* kConfigPath = "scripts\\FLACompatBridge.ini";
+constexpr const char* kLogRelativePath = "scripts\\FLACompatBridge.log";
+constexpr const char* kConfigRelativePath = "scripts\\FLACompatBridge.ini";
+constexpr const char* kProperShadersStateTraceRelativePath =
+    "scripts\\FLACompatBridge.propershaders-state-ring.log";
+constexpr const char* kFlaLogRelativePath = "fastman92limitAdjuster.log";
+constexpr const char* kFlaIniRelativePath = "fastman92limitAdjuster_GTASA.ini";
+char g_logPath[MAX_PATH] = "scripts\\FLACompatBridge.log";
+char g_configPath[MAX_PATH] = "scripts\\FLACompatBridge.ini";
+char g_properShadersStateTracePath[MAX_PATH] =
+    "scripts\\FLACompatBridge.propershaders-state-ring.log";
+char g_flaLogPath[MAX_PATH] = "fastman92limitAdjuster.log";
+char g_flaIniPath[MAX_PATH] = "fastman92limitAdjuster_GTASA.ini";
+LONG g_bridgeConfigOpenRetries = 0;
+LONG g_flaRuntimeRecoveryStarted = 0;
 
 struct BridgeConfig {
     bool enableBridge = true;
@@ -73,8 +86,8 @@ struct BridgeConfig {
     int gangOnlyPopulationGuardIntervalMs = 2000;
     int gangOnlyPopulationGuardIterations = 180;
     bool gangOnlyPopulationGuardClearCheatFlag = true;
-    bool enablePedStreamingZoneRepair = true;
-    bool pedStreamingZoneRepairCallOriginal = true;
+    bool enablePedStreamingZoneRepair = false;
+    bool pedStreamingZoneRepairCallOriginal = false;
     int pedStreamingZoneRepairStartDelayMs = 20000;
     int pedStreamingZoneRepairIntervalMs = 2000;
     int pedStreamingZoneRepairIterations = 180;
@@ -82,8 +95,8 @@ struct BridgeConfig {
     int pedStreamingZoneRepairMaxLogs = 64;
     bool enableStreamingBusyThresholdPatch = true;
     int streamingBusyThreshold = 128;
-    bool enablePopulationUpdateBudgetPatch = true;
-    int populationUpdateBudgetMs = 33;
+    bool enablePopulationUpdateBudgetPatch = false;
+    int populationUpdateBudgetMs = 4;
     bool enableCrashClassification = true;
     bool enableRuntimeRewriteAudit = true;
     bool enableOpenLimitAdjusterOverlapAudit = true;
@@ -97,6 +110,9 @@ struct BridgeConfig {
     char forceNoRuntimeRewrite[512]{};
     char forceNoAutoPoolGuard[512]{};
     bool enableProperShadersCompat = true;
+    bool enableProperShadersRenderStateGuard = true;
+    bool enableProperShadersStateRingTrace = false;
+    int properShadersStateRingTriggerVirtualKey = VK_F10;
     bool enableRuntimeRewrite = false;
     bool enableRuntimeRewriteRescan = false;
     bool enableRuntimeRewriteRuleTable = true;
@@ -125,7 +141,7 @@ struct BridgeConfig {
     bool enableMixSetsPoolAllocateGuard = true;
     bool enableUrbanizePoolAllocateGuard = true;
     bool enableVehFuncsPoolAllocateGuard = true;
-    bool enableAutoPoolAllocateGuard = true;
+    bool enableAutoPoolAllocateGuard = false;
     bool enableDeferredPoolAllocateReplay = true;
     int autoPoolAllocateGuardMaxPatches = 256;
     int deferredPoolAllocateReplayIterations = 600;
@@ -134,7 +150,9 @@ struct BridgeConfig {
     char autoPoolAllocateGuardDenylist[512]{};
     bool enableAnimUncompressGuard = true;
     bool enableAnimStaticAssocGuard = true;
-    bool enableAnimFrameUpdateGuard = true;
+    bool enableAnimFrameUpdateGuard = false;
+    bool enableAnimEmptyUpdateGuard = true;
+    bool enableAnimLifecycleDiagnostics = true;
     bool enableRpAnimBlendClumpInitGuard = true;
     bool enableRwClumpForAllAtomicsGuard = true;
     bool enableShouldModelBeStreamedGuard = true;
@@ -309,6 +327,10 @@ LONG g_lazyCPoolBatchDepth = 0;
 LONG g_ptrNodeExhaustionGuardLogs = 0;
 LONG g_rwClumpForAllAtomicsGuardLogs = 0;
 LONG g_rpAnimBlendClumpInitGuardLogs = 0;
+PVOID g_vectoredExceptionHandlerHandle = nullptr;
+DWORD g_gameThreadId = 0;
+uintptr_t g_chainedStreamingBusyTarget = 0;
+uintptr_t g_cPoolsInitialiseReplayTrampoline = 0;
 
 using FlaAreDifficultIDsExtendedFn = bool(__cdecl*)();
 using FlaGetNumberOfFileIDsFn = int32_t(__cdecl*)();
@@ -337,24 +359,59 @@ uintptr_t g_cleoPlusPedAllocateBlocksContinue = 0;
 uintptr_t g_mixSetsPedAllocateBlocksContinue = 0;
 uintptr_t g_urbanizePedAllocateBlocksContinue = 0;
 uintptr_t g_vehFuncsVehicleAllocateBlocksContinue = 0;
+LONG g_vehFuncsPoolGuardInstallerStarted = 0;
 uintptr_t g_animUncompressContinue = 0;
 uintptr_t g_animStaticAssocInitContinue = 0;
 uintptr_t g_animUpdateBlendContinue = 0;
 uintptr_t g_animFrameUpdateSkinnedContinue = 0;
 uintptr_t g_animFrameUpdateSkinnedVelocityContinue = 0;
 uintptr_t g_animBlendGroupContinue = 0;
+uintptr_t g_animClumpFinalizeNodesContinue = 0;
+uintptr_t g_animClumpFinalizeNodesEmpty = 0;
+uintptr_t g_animDestroyAssociationsContinue = 0;
+uintptr_t g_animRemoveBlockContinue = 0;
 uintptr_t g_rwClumpForAllAtomicsContinue = 0;
 uintptr_t g_rpAnimBlendClumpInitContinue = 0;
+constexpr size_t kRwClumpCallbackCacheSize = 64;
+std::atomic<uintptr_t> g_rwClumpExecutableCallbacks[kRwClumpCallbackCacheSize]{};
 uintptr_t g_shouldModelBeStreamedContinue = 0;
 uintptr_t g_shouldModelBeStreamedReturnFalse = 0;
 uintptr_t g_flaTrainTypeCarriagesLoaderThis = 0;
 uintptr_t g_flaTrainTypeCarriagesLoadFunc = 0;
 uintptr_t g_widescreenFixSpriteNameGuardContinue = 0;
 uintptr_t g_widescreenFixSpriteNameGuardSkip = 0;
+uintptr_t g_flaAddTxdSlotThunk = 0;
+uintptr_t g_properShadersAddTxdSlotThunk = 0;
+uintptr_t g_properShadersPatchedRenderSceneTrampoline = 0;
+uintptr_t g_properShadersRenderFadingEntitiesTrampoline = 0;
+uintptr_t g_properShadersMainSceneStateTrampoline = 0;
+LONG g_properShadersRenderStateGuardInstallState = 0;
+LONG g_properShadersFadingStateGuardInstallState = 0;
+LONG g_properShadersMainSceneStateGuardInstallState = 0;
+LONG g_properShadersRenderStateGuardApiReady = 0;
+LONG g_properShadersRenderStateSampleAttempts = 0;
+LONG g_properShadersRenderStateChangeLogs = 0;
+LONG g_properShadersFadingStateChangeLogs = 0;
+LONG g_properShadersMainSceneStateChangeLogs = 0;
 uintptr_t g_lastValidAnimHierarchy = 0;
 constexpr size_t kMaxNeutralizedAnimAssociations = 64;
 uintptr_t g_neutralizedAnimAssociations[kMaxNeutralizedAnimAssociations]{};
 LONG g_neutralizedAnimAssociationCursor = 0;
+constexpr size_t kAnimLifecycleHistorySize = 64;
+struct AnimLifecycleRecord {
+    uintptr_t group = 0;
+    uintptr_t associations = 0;
+    uintptr_t caller = 0;
+    uintptr_t animBlock = 0;
+    uint32_t associationCount = 0;
+    uint32_t idOffset = 0;
+    uint32_t groupIndex = UINT32_MAX;
+    uint32_t threadId = 0;
+    uint32_t tick = 0;
+    volatile LONG sequence = 0;
+};
+AnimLifecycleRecord g_animLifecycleHistory[kAnimLifecycleHistorySize]{};
+LONG g_animLifecycleCursor = 0;
 uintptr_t g_radarTraceBase = 0;
 uint32_t g_radarTraceLimit = 175;
 alignas(16) uint32_t g_boundCentreScratch[4]{};
@@ -372,6 +429,7 @@ CRITICAL_SECTION g_deferredPoolAllocateLock{};
 DeferredPoolAllocate g_deferredPoolAllocates[kMaxDeferredPoolAllocates]{};
 uint32_t g_deferredPoolAllocateCount = 0;
 LONG g_deferredPoolAllocateLogs = 0;
+LONG g_deferredPoolAllocateReplayActive = 0;
 
 struct ScriptParamLite {
     union {
@@ -400,6 +458,7 @@ uintptr_t g_commands900To999TableSlot = 0;
 uintptr_t g_commands600To699TableSlot = 0;
 LONG g_closestCarNode03D3FallbackLogs = 0;
 LONG g_sanPabloSpecialActorBridgeLogs = 0;
+LONG g_sanPabloSpecialActorBridgeLastLogState = (-2147483647L - 1L);
 LONG g_specialActorSlotRangeLogs = 0;
 LONG g_forwardingCommands600To699 = 0;
 LONG g_forwardingCommands900To999 = 0;
@@ -413,6 +472,15 @@ float g_lastTargetBlipX = 0.0f;
 float g_lastTargetBlipY = 0.0f;
 float g_lastTargetBlipZ = 0.0f;
 LONG g_hasLastTargetBlipCoords = 0;
+
+bool ShouldLogSanPabloSpecialActorBridge(long count, int mode, int result)
+{
+    const LONG state = static_cast<LONG>(
+        ((static_cast<uint32_t>(mode) & 0xFFFFu) << 16) |
+        (static_cast<uint32_t>(result) & 0xFFFFu));
+    const LONG previous = InterlockedExchange(&g_sanPabloSpecialActorBridgeLastLogState, state);
+    return count <= 32 || previous != state || (count % 1200) == 0;
+}
 
 struct CleoExports {
     using OpcodeResult = signed char;
@@ -619,6 +687,7 @@ constexpr uintptr_t kCStreamingStreamVehiclesAndPedsAlways = 0x0040B650;
 constexpr uintptr_t kCStreamingStreamVehiclesAndPeds = 0x0040B700;
 constexpr uintptr_t kCStreamingUpdate = 0x0040E670;
 constexpr uintptr_t kCStreamingIsVeryBusy = 0x004076A0;
+constexpr uintptr_t kHoodlumCStreamingIsVeryBusy = 0x0156D7A0;
 constexpr uintptr_t kCGamePopulationUpdateBudgetCmp = 0x0053C00F;
 constexpr uintptr_t kCGamePopulationUpdateBudgetImmediate = 0x0053C011;
 constexpr uintptr_t kCCutsceneMgrCutsceneProcessing = 0x00B5F852;
@@ -703,19 +772,22 @@ bool ReadCPoolHeader(uintptr_t pool, uint32_t* size, uint32_t* firstFree);
 bool ReadCorePoolPointers(uint32_t* pedPool, uint32_t* vehiclePool, uint32_t* objectPool, uint32_t* colModelPool);
 bool AreCorePoolsReadyForDeferredReplay(uint32_t* pedOut, uint32_t* vehicleOut, uint32_t* objectOut, uint32_t* colModelOut);
 bool EnsureLazyCPoolReady(uintptr_t poolPtr, const char* reason);
-void TriggerDeferredPoolAllocatesForPool(uintptr_t poolPtrAddress);
+void PumpDeferredPoolAllocatesOnGameThread(uint32_t maxCount);
+extern "C" void __cdecl Bridge_PumpDeferredPoolAllocatesAfterCorePoolInit();
 bool EnsureLazyCoreCPoolsReady(const char* reason);
 bool EnsureBatchLazyCPoolsInitialised(const char* reason, bool forceRetry = false);
 bool IsReasonableWorldCoord(float value);
 uintptr_t DecodeRel32JumpTarget(uintptr_t address);
 uintptr_t ModuleBaseFromAddress(uintptr_t address, char* moduleName, size_t moduleNameSize);
+DWORD FindProcessMainThreadId();
 void LogRelocatedAddressDiagnostics();
 void LogPoolPointerDiagnostics();
 DWORD WINAPI PopulationPoolDiagnosticsThread(void*);
 DWORD WINAPI GangOnlyPopulationGuardThread(void*);
 DWORD WINAPI PedStreamingZoneRepairThread(void*);
 uint32_t ReadZoneStreamingCheatMaskForLog();
-void RefreshFlaRuntimeState();
+void RefreshFlaRuntimeState(bool logState = true);
+void StartFlaRuntimeStateRecovery();
 void LogCrashClassification(EXCEPTION_POINTERS* info);
 void LogBytes(const char* label, uintptr_t address, size_t count);
 void LogStreamingPedFunctionEntryDiagnostics(const char* reason);
@@ -761,8 +833,8 @@ void InstallCleoPlusPoolAllocateGuard();
 void InstallMixSetsPoolAllocateGuard();
 void InstallUrbanizePoolAllocateGuard();
 void InstallVehFuncsPoolAllocateGuard();
+void StartVehFuncsPoolAllocateGuardInstaller();
 void InstallAutoPoolAllocateGuards();
-DWORD WINAPI DeferredPoolAllocateReplayThread(void*);
 DWORD WINAPI MixSetsPoolAllocateGuardInstallThread(void*);
 DWORD WINAPI UrbanizePoolAllocateGuardInstallThread(void*);
 DWORD WINAPI VehFuncsPoolAllocateGuardInstallThread(void*);
@@ -772,10 +844,13 @@ void InstallAnimUpdateBlendGuard();
 void InstallAnimBlendGroupGuard();
 void InstallAnimFrameUpdateSkinnedGuard();
 void InstallAnimFrameUpdateSkinnedVelocityGuard();
+void InstallAnimEmptyUpdateGuard();
+void InstallAnimLifecycleDiagnostics();
 void InstallRpAnimBlendClumpInitGuard();
 void InstallRwClumpForAllAtomicsGuard();
 void InstallShouldModelBeStreamedGuard();
 void InstallStreamingBusyThresholdPatch();
+void InstallCPoolsInitialiseReplayHook();
 void InstallPopulationUpdateBudgetPatch();
 int RepairOpenLimitAdjusterSaPoolHooks(const char* phase);
 DWORD WINAPI OpenLimitAdjusterRepairThread(void*);
@@ -783,6 +858,7 @@ DWORD WINAPI OpenLimitAdjusterRepairThread(void*);
 // Pattern scanning for pool allocate guards
 uintptr_t FindPatternInModuleText(HMODULE module, const uint8_t* pattern, const char* mask, size_t patternLen);
 uint32_t CalculateModuleTextHash(HMODULE module);
+uint32_t CalculateModuleFileTextHash(HMODULE module);
 uintptr_t FindAllocateBlocksByPattern(HMODULE module, const char* typeName, uintptr_t expectedPoolPtr);
 bool LooksLikePluginSdkPoolAllocateBlocks(uintptr_t address, uintptr_t expectedPoolPtr);
 HMODULE FindLoadedModuleBySubstring(const char* needle);
@@ -808,6 +884,9 @@ extern "C" bool __stdcall Bridge_ShouldBlockGroupBlendAnimation(uint32_t groupId
 extern "C" void __stdcall Bridge_RepairInvalidStaticAssociation(uintptr_t runtimeAssociation, uintptr_t staticAssociation);
 extern "C" bool __stdcall Bridge_PrepareAnimAssociationUpdate(uintptr_t association);
 extern "C" bool __stdcall Bridge_PrepareAnimFrameUpdateData(uintptr_t updateData);
+extern "C" void __stdcall Bridge_LogEmptyAnimUpdate(uintptr_t updateData, uintptr_t clump);
+extern "C" void __stdcall Bridge_LogAnimGroupDestroy(uintptr_t group, uintptr_t returnAddress);
+extern "C" void __stdcall Bridge_LogAnimBlockRemove(uint32_t blockIndex, uintptr_t returnAddress);
 extern "C" bool __stdcall Bridge_ShouldSkipRpAnimBlendClumpInit(uintptr_t clump, uintptr_t returnAddress, uintptr_t stack);
 extern "C" bool __stdcall Bridge_IsSafeRpClumpForAllAtomicsCall(uintptr_t clump, uintptr_t callback, uintptr_t data, uintptr_t returnAddress, uintptr_t stack);
 extern "C" void __stdcall Bridge_LogInvalidShouldModelBeStreamedColModel(uintptr_t entity, uintptr_t modelInfo, uintptr_t colModel, uintptr_t stack);
@@ -961,6 +1040,21 @@ extern "C" __declspec(naked) void Bridge_MixSets_PedAllocateBlocks_PoolGuard()
     }
 }
 
+extern "C" __declspec(naked) void Bridge_CPoolsInitialise_ReplayHook()
+{
+    __asm
+    {
+        call dword ptr [g_cPoolsInitialiseReplayTrampoline]
+
+        pushfd
+        pushad
+        call Bridge_PumpDeferredPoolAllocatesAfterCorePoolInit
+        popad
+        popfd
+        ret
+    }
+}
+
 extern "C" __declspec(naked) void __stdcall Bridge_InvokePoolAllocateContinue(uintptr_t continueAddress, uintptr_t thisPtr, uintptr_t poolPtr)
 {
     __asm
@@ -969,6 +1063,22 @@ extern "C" __declspec(naked) void __stdcall Bridge_InvokePoolAllocateContinue(ui
         mov eax, [esp + 12]
         call dword ptr [esp + 4]
         ret 12
+    }
+}
+
+extern "C" __declspec(naked) void Bridge_ProperShadersAddTxdSlot_Combined()
+{
+    __asm
+    {
+        // Insert our continuation below AddTxdSlot's saved ESI. FLA then pops
+        // the real saved ESI and returns here with [caller-ret, name] intact.
+        pop ecx
+        push afterFla
+        push ecx
+        jmp dword ptr [g_flaAddTxdSlotThunk]
+
+    afterFla:
+        jmp dword ptr [g_properShadersAddTxdSlotThunk]
     }
 }
 
@@ -1081,9 +1191,8 @@ extern "C" __declspec(naked) void Bridge_AnimFrameUpdateSkinnedVelocity_Guard()
         push eax
         push eax
         call Bridge_PrepareAnimFrameUpdateData
-        mov dl, al
+        test al, al
         pop eax
-        test dl, dl
         jz skipFrameUpdate
 
         sub esp, 0x68
@@ -1116,6 +1225,73 @@ extern "C" __declspec(naked) void Bridge_AnimFrameUpdateSkinned_Guard()
         retn
 
     skipFrameUpdate:
+        retn
+    }
+}
+
+extern "C" __declspec(naked) void Bridge_AnimClumpFinalizeNodes_Guard()
+{
+    __asm
+    {
+        mov dword ptr [esp + ebx * 4 + 0x1C], 0
+        test ebx, ebx
+        jz emptyUpdate
+
+        push dword ptr [g_animClumpFinalizeNodesContinue]
+        retn
+
+    emptyUpdate:
+        pushfd
+        pushad
+        lea eax, [esp + 0x3C]
+        mov ecx, [esp + 0x74]
+        push ecx
+        push eax
+        call Bridge_LogEmptyAnimUpdate
+        popad
+        popfd
+        push dword ptr [g_animClumpFinalizeNodesEmpty]
+        retn
+    }
+}
+
+extern "C" __declspec(naked) void Bridge_AnimDestroyAssociations_Diagnostic()
+{
+    __asm
+    {
+        pushfd
+        pushad
+        mov eax, [esp + 0x24]
+        push eax
+        push ecx
+        call Bridge_LogAnimGroupDestroy
+        popad
+        popfd
+
+        push esi
+        mov esi, ecx
+        mov ecx, [esi + 4]
+        push dword ptr [g_animDestroyAssociationsContinue]
+        retn
+    }
+}
+
+extern "C" __declspec(naked) void Bridge_AnimRemoveBlock_Diagnostic()
+{
+    __asm
+    {
+        pushfd
+        pushad
+        mov eax, [esp + 0x28]
+        mov edx, [esp + 0x24]
+        push edx
+        push eax
+        call Bridge_LogAnimBlockRemove
+        popad
+        popfd
+
+        mov eax, dword ptr ds:[0x00B4EA28]
+        push dword ptr [g_animRemoveBlockContinue]
         retn
     }
 }
@@ -1180,7 +1356,6 @@ extern "C" __declspec(naked) void Bridge_ShouldModelBeStreamed_ColModelGuard()
         retn
 
     invalidColModel:
-        fstp st(0)
         pushad
         push dword ptr [esp + 12]
         push eax
@@ -1234,28 +1409,18 @@ extern "C" __declspec(naked) void Bridge_GetBoundRect_ColModelGuard()
 {
     __asm
     {
-        push esi
-        mov esi, ecx
+        // FLA has already resolved the extended model ID and loaded m_pColModel
+        // into EAX at this point. Only replace the missing collision model; doing
+        // the lookup here again puts FLA's extension map on every bounds query.
+        test eax, eax
+        jnz validColModel
+        mov eax, offset g_fakeColModelForBounds
 
-        push esi
-        call Bridge_HasValidBoundRectColModel
-        test al, al
-        jz fallbackRect
-
-        pop edx
-        sub esp, 0x34
-        push edx
-        push 0x00534126
+    validColModel:
+        mov edx, [eax]
+        mov [esp + 0x10], edx
+        push 0x0053413A
         retn
-
-    fallbackRect:
-        mov eax, [esp + 8]
-        push eax
-        push esi
-        call Bridge_FillFallbackBoundRect
-        mov eax, [esp + 8]
-        pop esi
-        ret 4
     }
 }
 
@@ -1279,7 +1444,36 @@ extern "C" __declspec(naked) void Bridge_FlaTrainInit_LoadPreserveEax()
 
 extern "C" int __stdcall Bridge_IsReadableMemory(uintptr_t address, size_t size)
 {
-    return IsReadableCommitted(address, size) ? 1 : 0;
+    if (!address || !size) {
+        return 0;
+    }
+
+    const uintptr_t last = address + size - 1;
+    if (last < address) {
+        return 0;
+    }
+
+    __try {
+        volatile uint8_t sink = *reinterpret_cast<volatile const uint8_t*>(address);
+        if (last != address) {
+            sink ^= *reinterpret_cast<volatile const uint8_t*>(last);
+        }
+
+        uintptr_t page = (address & ~static_cast<uintptr_t>(0xFFF)) + 0x1000;
+        while (page > address && page < last) {
+            sink ^= *reinterpret_cast<volatile const uint8_t*>(page);
+            const uintptr_t nextPage = page + 0x1000;
+            if (nextPage <= page) {
+                break;
+            }
+            page = nextPage;
+        }
+        (void)sink;
+        return 1;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
 }
 
 extern "C" __declspec(naked) void Bridge_TxdLoadDictionaryWriteGuard()
@@ -1438,10 +1632,73 @@ extern "C" __declspec(naked) void Bridge_WidescreenFixSpriteNameGuard()
 }
 #endif
 
+void ResolveGameRelativePath(const char* relativePath, char* out, size_t outSize)
+{
+    if (!relativePath || !out || outSize == 0) {
+        return;
+    }
+
+    char executablePath[MAX_PATH]{};
+    const DWORD length = GetModuleFileNameA(nullptr, executablePath, static_cast<DWORD>(sizeof(executablePath)));
+    if (!length || length >= sizeof(executablePath)) {
+        return;
+    }
+
+    char* slash = std::strrchr(executablePath, '\\');
+    char* slash2 = std::strrchr(executablePath, '/');
+    if (slash2 && (!slash || slash2 > slash)) {
+        slash = slash2;
+    }
+    if (!slash) {
+        return;
+    }
+
+    const size_t directoryLength = static_cast<size_t>(slash - executablePath) + 1;
+    const size_t relativeLength = std::strlen(relativePath);
+    if (directoryLength + relativeLength >= outSize) {
+        return;
+    }
+
+    std::memcpy(out, executablePath, directoryLength);
+    std::memcpy(out + directoryLength, relativePath, relativeLength + 1);
+}
+
+void ResolveGamePath(const char* path, char* out, size_t outSize)
+{
+    if (!path || !out || outSize == 0) {
+        return;
+    }
+
+    out[0] = '\0';
+    const bool absolute =
+        (path[0] && path[1] == ':') ||
+        (path[0] == '\\' && path[1] == '\\') ||
+        (path[0] == '/' && path[1] == '/');
+    if (absolute) {
+        strncpy_s(out, outSize, path, _TRUNCATE);
+        return;
+    }
+
+    ResolveGameRelativePath(path, out, outSize);
+    if (!out[0]) {
+        strncpy_s(out, outSize, path, _TRUNCATE);
+    }
+}
+
+void InitializeBridgeFilePaths()
+{
+    ResolveGameRelativePath(kLogRelativePath, g_logPath, sizeof(g_logPath));
+    ResolveGameRelativePath(kConfigRelativePath, g_configPath, sizeof(g_configPath));
+    ResolveGameRelativePath(kProperShadersStateTraceRelativePath,
+        g_properShadersStateTracePath, sizeof(g_properShadersStateTracePath));
+    ResolveGameRelativePath(kFlaLogRelativePath, g_flaLogPath, sizeof(g_flaLogPath));
+    ResolveGameRelativePath(kFlaIniRelativePath, g_flaIniPath, sizeof(g_flaIniPath));
+}
+
 void Log(const char* fmt, ...)
 {
     FILE* file = nullptr;
-    if (fopen_s(&file, kLogPath, "a") != 0 || !file) {
+    if (fopen_s(&file, g_logPath, "a") != 0 || !file) {
         return;
     }
 
@@ -1471,8 +1728,25 @@ const char* BaseName(const char* path)
 
 bool ReadSmallTextValue(const char* filePath, const char* key, char* out, size_t outSize)
 {
+    char resolvedPath[MAX_PATH]{};
+    ResolveGamePath(filePath, resolvedPath, sizeof(resolvedPath));
+    if (!resolvedPath[0]) {
+        return false;
+    }
+
     FILE* file = nullptr;
-    if (fopen_s(&file, filePath, "r") != 0 || !file) {
+    const bool isBridgeConfig = _stricmp(resolvedPath, g_configPath) == 0;
+    const int maxOpenAttempts = isBridgeConfig ? 101 : 1;
+    for (int attempt = 0; attempt < maxOpenAttempts; ++attempt) {
+        if (fopen_s(&file, resolvedPath, "r") == 0 && file) {
+            break;
+        }
+        if (attempt + 1 < maxOpenAttempts) {
+            InterlockedIncrement(&g_bridgeConfigOpenRetries);
+            Sleep(10);
+        }
+    }
+    if (!file) {
         return false;
     }
 
@@ -1519,8 +1793,14 @@ bool ReadSmallTextValue(const char* filePath, const char* key, char* out, size_t
 
 bool ReadSectionTextValue(const char* filePath, const char* section, const char* key, char* out, size_t outSize)
 {
+    char resolvedPath[MAX_PATH]{};
+    ResolveGamePath(filePath, resolvedPath, sizeof(resolvedPath));
+    if (!resolvedPath[0]) {
+        return false;
+    }
+
     FILE* file = nullptr;
-    if (fopen_s(&file, filePath, "r") != 0 || !file) {
+    if (fopen_s(&file, resolvedPath, "r") != 0 || !file) {
         return false;
     }
 
@@ -1579,7 +1859,7 @@ bool ReadSectionTextValue(const char* filePath, const char* section, const char*
 
 void WriteDefaultBridgeConfigIfMissing()
 {
-    if (GetFileAttributesA(kConfigPath) != INVALID_FILE_ATTRIBUTES) {
+    if (GetFileAttributesA(g_configPath) != INVALID_FILE_ATTRIBUTES) {
         return;
     }
 
@@ -1626,11 +1906,11 @@ void WriteDefaultBridgeConfigIfMissing()
         "GangOnlyPopulationGuardIntervalMs = 5000\n"
         "GangOnlyPopulationGuardIterations = 72\n"
         "GangOnlyPopulationGuardClearCheatFlag = 1\n"
-        "; Watches the vanilla CStreaming pedestrian-zone slots. If popcycle has a valid outdoor zone\n"
-        "; but CStreaming::ms_pedsLoaded stays empty, call the original StreamZoneModels entry a few times.\n"
-        "; This is diagnostic and self-limited: it logs the function hook target and only runs outside interiors.\n"
-        "EnablePedStreamingZoneRepair = 1\n"
-        "PedStreamingZoneRepairCallOriginal = 1\n"
+        "; Diagnostic-only sampler for vanilla CStreaming pedestrian-zone state.\n"
+        "; It never calls GTA streaming functions from its worker thread.\n"
+        "EnablePedStreamingZoneRepair = 0\n"
+        "; Legacy compatibility key. Runtime calls remain disabled even if this is set to 1.\n"
+        "PedStreamingZoneRepairCallOriginal = 0\n"
         "PedStreamingZoneRepairStartDelayMs = 20000\n"
         "PedStreamingZoneRepairIntervalMs = 2000\n"
         "PedStreamingZoneRepairIterations = 180\n"
@@ -1639,9 +1919,10 @@ void WriteDefaultBridgeConfigIfMissing()
         "; Raises CStreaming::IsVeryBusy threshold so heavy map/LOD preloading does not starve normal pedestrian streaming forever.\n"
         "EnableStreamingBusyThresholdPatch = 1\n"
         "StreamingBusyThreshold = 128\n"
-        "; Raises CGame::Process population generation budget. Vanilla 4 ms skips walking-ped creation when streaming updates are expensive.\n"
-        "EnablePopulationUpdateBudgetPatch = 1\n"
-        "PopulationUpdateBudgetMs = 33\n"
+        "; Optional diagnostic override for CGame::Process population generation budget.\n"
+        "; The release default preserves the vanilla 4 ms comparison.\n"
+        "EnablePopulationUpdateBudgetPatch = 0\n"
+        "PopulationUpdateBudgetMs = 4\n"
         "EnableCrashClassification = 1\n"
         "EnableRuntimeRewriteAudit = 0\n"
         "EnableOpenLimitAdjusterOverlapAudit = 0\n"
@@ -1665,6 +1946,13 @@ void WriteDefaultBridgeConfigIfMissing()
         "ForceNoAutoPoolGuard = ImprovedStreaming\n"
         "; ProperShaders writes a TXD hook inside FLA's CTxdStore::AddTxdSlot JMP. Keep this on if ProperShaders is loaded.\n"
         "EnableProperShadersCompat = 1\n"
+        "; Preserve D3D9 alpha-test state around ProperShaders' intercepted RenderScene.\n"
+        "; Applied only to the verified ProperShaders build; unknown hashes are rejected.\n"
+        "EnableProperShadersRenderStateGuard = 1\n"
+        "; Keep a low-overhead ring of ProperShaders pass-boundary D3D9 states.\n"
+        "; Press F10 after a one-frame artifact to dump the preceding records.\n"
+        "EnableProperShadersStateRingTrace = 0\n"
+        "ProperShadersStateRingTriggerVirtualKey = 121\n"
         "\n"
         "[RuntimeRewrite]\n"
         "; Runtime rewrite patches loaded modules in memory. Keep 0 unless testing a named module.\n"
@@ -1678,6 +1966,9 @@ void WriteDefaultBridgeConfigIfMissing()
         "RuntimeRewriteRuleCount = 3\n"
         "RuntimeRewriteDefaultMaxPatchesPerModule = 256\n"
         "; Semicolon/comma separated substring allowlist, for example: .cleo;urbanize\n"
+        "; Empty means no module is patched, even with EnableRuntimeRewrite = 1.\n"
+        "; This is a safety default, not a bug: list every module by name instead of\n"
+        "; leaving this blank and expecting it to mean \"patch everything\".\n"
         "RuntimeRewriteAllowlist = \n"
         "; Semicolon/comma separated substring denylist. Denylist wins over allowlist.\n"
         "RuntimeRewriteDenylist = SilentPatch;WidescreenFix;WindowedMode;CrashInfo;modloader.asi;MixSets;FLACompatBridge;fastman92;DINPUT8;vorbis\n"
@@ -1769,7 +2060,12 @@ void WriteDefaultBridgeConfigIfMissing()
         "EnableCObjectCreateBridge = 1\n"
         "EnableAnimUncompressGuard = 1\n"
         "EnableAnimStaticAssocGuard = 1\n"
-        "EnableAnimFrameUpdateGuard = 1\n"
+        "; Expensive legacy per-frame/per-node VirtualQuery diagnostics. Keep disabled for normal play.\n"
+        "EnableAnimFrameUpdateGuard = 0\n"
+        "; One integer check per animated clump. Prevents GTA's frame callbacks from entering with an empty node array.\n"
+        "EnableAnimEmptyUpdateGuard = 1\n"
+        "; Logs animation block/group destruction so stale static associations can be traced to their releaser.\n"
+        "EnableAnimLifecycleDiagnostics = 1\n"
         "; Guards RpAnimBlendClumpInit against null/corrupt clumps before animation data allocation.\n"
         "EnableRpAnimBlendClumpInitGuard = 1\n"
         "; Guards RenderWare RpClumpForAllAtomics against null/corrupt clumps from partially loaded model instances.\n"
@@ -1832,9 +2128,9 @@ void WriteDefaultBridgeConfigIfMissing()
         "EnableUrbanizeProblemPedPreload = 1\n"
         "\n"
         "[PoolGuards]\n"
-        "; Scans all allowed modules for plugin-sdk ExtendedData AllocateBlocks patterns.\n"
-        "; Pool is checked before the original function runs; if the pool is not ready, replay is deferred.\n"
-        "EnableAutoPoolAllocateGuard = 1\n"
+        "; Scans allowed legacy modules for plugin-sdk ExtendedData AllocateBlocks patterns.\n"
+        "; Deferred continuations are replayed only from the GTA CStreaming game-thread hook.\n"
+        "EnableAutoPoolAllocateGuard = 0\n"
         "EnableDeferredPoolAllocateReplay = 1\n"
         "AutoPoolAllocateGuardMaxPatches = 256\n"
         "DeferredPoolAllocateReplayIterations = 600\n"
@@ -1947,7 +2243,7 @@ void WriteDefaultBridgeConfigIfMissing()
         "SpecialActorName036 = RYDER2\n"
         "SpecialActorName037 = RYDER3\n";
 
-    HANDLE file = CreateFileA(kConfigPath, GENERIC_WRITE, FILE_SHARE_READ, nullptr,
+    HANDLE file = CreateFileA(g_configPath, GENERIC_WRITE, FILE_SHARE_READ, nullptr,
         CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file == INVALID_HANDLE_VALUE) {
         return;
@@ -1961,7 +2257,7 @@ void WriteDefaultBridgeConfigIfMissing()
 bool ReadBridgeBool(const char* key, bool defaultValue)
 {
     char value[64]{};
-    if (!ReadSmallTextValue(kConfigPath, key, value, sizeof(value))) {
+    if (!ReadSmallTextValue(g_configPath, key, value, sizeof(value))) {
         return defaultValue;
     }
 
@@ -1981,7 +2277,7 @@ bool ReadBridgeBool(const char* key, bool defaultValue)
 int ReadBridgeInt(const char* key, int defaultValue, int minValue, int maxValue)
 {
     char value[64]{};
-    if (!ReadSmallTextValue(kConfigPath, key, value, sizeof(value))) {
+    if (!ReadSmallTextValue(g_configPath, key, value, sizeof(value))) {
         return defaultValue;
     }
 
@@ -2003,7 +2299,7 @@ int ReadBridgeInt(const char* key, int defaultValue, int minValue, int maxValue)
 uint32_t ReadBridgeU32(const char* key, uint32_t defaultValue)
 {
     char value[64]{};
-    if (!ReadSmallTextValue(kConfigPath, key, value, sizeof(value))) {
+    if (!ReadSmallTextValue(g_configPath, key, value, sizeof(value))) {
         return defaultValue;
     }
 
@@ -2026,7 +2322,7 @@ void ReadBridgeText(const char* key, char* out, size_t outSize, const char* defa
         return;
     }
     out[0] = '\0';
-    if (!ReadSmallTextValue(kConfigPath, key, out, outSize) && defaultValue) {
+    if (!ReadSmallTextValue(g_configPath, key, out, outSize) && defaultValue) {
         strncpy_s(out, outSize, defaultValue, _TRUNCATE);
     }
 }
@@ -2034,7 +2330,7 @@ void ReadBridgeText(const char* key, char* out, size_t outSize, const char* defa
 int ReadFlaInt(const char* key, int defaultValue, int minValue, int maxValue)
 {
     char value[64]{};
-    if (!ReadSmallTextValue("fastman92limitAdjuster_GTASA.ini", key, value, sizeof(value))) {
+    if (!ReadSmallTextValue(g_flaIniPath, key, value, sizeof(value))) {
         return defaultValue;
     }
 
@@ -2098,6 +2394,10 @@ void LoadBridgeConfig()
     g_config.pedStreamingZoneRepairIterations = ReadBridgeInt("PedStreamingZoneRepairIterations", g_config.pedStreamingZoneRepairIterations, 0, 10000);
     g_config.pedStreamingZoneRepairMaxCalls = ReadBridgeInt("PedStreamingZoneRepairMaxCalls", g_config.pedStreamingZoneRepairMaxCalls, 0, 10000);
     g_config.pedStreamingZoneRepairMaxLogs = ReadBridgeInt("PedStreamingZoneRepairMaxLogs", g_config.pedStreamingZoneRepairMaxLogs, 0, 10000);
+    if (g_config.pedStreamingZoneRepairCallOriginal) {
+        Log("ped zone repair config: PedStreamingZoneRepairCallOriginal is ignored; off-thread GTA streaming calls are disabled");
+        g_config.pedStreamingZoneRepairCallOriginal = false;
+    }
     g_config.enableStreamingBusyThresholdPatch = ReadBridgeBool("EnableStreamingBusyThresholdPatch", g_config.enableStreamingBusyThresholdPatch);
     g_config.streamingBusyThreshold = ReadBridgeInt("StreamingBusyThreshold", g_config.streamingBusyThreshold, 5, 10000);
     g_config.enablePopulationUpdateBudgetPatch = ReadBridgeBool("EnablePopulationUpdateBudgetPatch", g_config.enablePopulationUpdateBudgetPatch);
@@ -2116,6 +2416,17 @@ void LoadBridgeConfig()
     ReadBridgeText("ForceNoRuntimeRewrite", g_config.forceNoRuntimeRewrite, sizeof(g_config.forceNoRuntimeRewrite));
     ReadBridgeText("ForceNoAutoPoolGuard", g_config.forceNoAutoPoolGuard, sizeof(g_config.forceNoAutoPoolGuard));
     g_config.enableProperShadersCompat = ReadBridgeBool("EnableProperShadersCompat", g_config.enableProperShadersCompat);
+    g_config.enableProperShadersRenderStateGuard = ReadBridgeBool(
+        "EnableProperShadersRenderStateGuard",
+        g_config.enableProperShadersRenderStateGuard);
+    g_config.enableProperShadersStateRingTrace = ReadBridgeBool(
+        "EnableProperShadersStateRingTrace",
+        g_config.enableProperShadersStateRingTrace);
+    g_config.properShadersStateRingTriggerVirtualKey = ReadBridgeInt(
+        "ProperShadersStateRingTriggerVirtualKey",
+        g_config.properShadersStateRingTriggerVirtualKey,
+        1,
+        255);
     g_config.enableRuntimeRewrite = ReadBridgeBool("EnableRuntimeRewrite", g_config.enableRuntimeRewrite);
     g_config.enableRuntimeRewriteRescan = ReadBridgeBool("EnableRuntimeRewriteRescan", g_config.enableRuntimeRewriteRescan);
     g_config.enableRuntimeRewriteRuleTable = ReadBridgeBool("EnableRuntimeRewriteRuleTable", g_config.enableRuntimeRewriteRuleTable);
@@ -2124,8 +2435,8 @@ void LoadBridgeConfig()
     g_config.runtimeRewriteIntervalMs = ReadBridgeInt("RuntimeRewriteIntervalMs", g_config.runtimeRewriteIntervalMs, 100, 60000);
     g_config.runtimeRewriteRuleCount = ReadBridgeInt("RuntimeRewriteRuleCount", g_config.runtimeRewriteRuleCount, 0, static_cast<int>(kMaxRuntimeRewriteRules));
     g_config.runtimeRewriteDefaultMaxPatchesPerModule = ReadBridgeInt("RuntimeRewriteDefaultMaxPatchesPerModule", g_config.runtimeRewriteDefaultMaxPatchesPerModule, 1, 100000);
-    ReadSmallTextValue(kConfigPath, "RuntimeRewriteAllowlist", g_config.runtimeRewriteAllowlist, sizeof(g_config.runtimeRewriteAllowlist));
-    ReadSmallTextValue(kConfigPath, "RuntimeRewriteDenylist", g_config.runtimeRewriteDenylist, sizeof(g_config.runtimeRewriteDenylist));
+    ReadSmallTextValue(g_configPath, "RuntimeRewriteAllowlist", g_config.runtimeRewriteAllowlist, sizeof(g_config.runtimeRewriteAllowlist));
+    ReadSmallTextValue(g_configPath, "RuntimeRewriteDenylist", g_config.runtimeRewriteDenylist, sizeof(g_config.runtimeRewriteDenylist));
     LoadRuntimeRewriteRules();
 
     g_config.enableLegacyModelInfoShadow = ReadBridgeBool("EnableLegacyModelInfoShadow", g_config.enableLegacyModelInfoShadow);
@@ -2150,11 +2461,13 @@ void LoadBridgeConfig()
     g_config.autoPoolAllocateGuardMaxPatches = ReadBridgeInt("AutoPoolAllocateGuardMaxPatches", g_config.autoPoolAllocateGuardMaxPatches, 0, 10000);
     g_config.deferredPoolAllocateReplayIterations = ReadBridgeInt("DeferredPoolAllocateReplayIterations", g_config.deferredPoolAllocateReplayIterations, 0, 100000);
     g_config.deferredPoolAllocateReplayIntervalMs = ReadBridgeInt("DeferredPoolAllocateReplayIntervalMs", g_config.deferredPoolAllocateReplayIntervalMs, 10, 10000);
-    ReadSmallTextValue(kConfigPath, "AutoPoolAllocateGuardAllowlist", g_config.autoPoolAllocateGuardAllowlist, sizeof(g_config.autoPoolAllocateGuardAllowlist));
-    ReadSmallTextValue(kConfigPath, "AutoPoolAllocateGuardDenylist", g_config.autoPoolAllocateGuardDenylist, sizeof(g_config.autoPoolAllocateGuardDenylist));
+    ReadSmallTextValue(g_configPath, "AutoPoolAllocateGuardAllowlist", g_config.autoPoolAllocateGuardAllowlist, sizeof(g_config.autoPoolAllocateGuardAllowlist));
+    ReadSmallTextValue(g_configPath, "AutoPoolAllocateGuardDenylist", g_config.autoPoolAllocateGuardDenylist, sizeof(g_config.autoPoolAllocateGuardDenylist));
     g_config.enableAnimUncompressGuard = ReadBridgeBool("EnableAnimUncompressGuard", g_config.enableAnimUncompressGuard);
     g_config.enableAnimStaticAssocGuard = ReadBridgeBool("EnableAnimStaticAssocGuard", g_config.enableAnimStaticAssocGuard);
     g_config.enableAnimFrameUpdateGuard = ReadBridgeBool("EnableAnimFrameUpdateGuard", g_config.enableAnimFrameUpdateGuard);
+    g_config.enableAnimEmptyUpdateGuard = ReadBridgeBool("EnableAnimEmptyUpdateGuard", g_config.enableAnimEmptyUpdateGuard);
+    g_config.enableAnimLifecycleDiagnostics = ReadBridgeBool("EnableAnimLifecycleDiagnostics", g_config.enableAnimLifecycleDiagnostics);
     g_config.enableRpAnimBlendClumpInitGuard = ReadBridgeBool("EnableRpAnimBlendClumpInitGuard", g_config.enableRpAnimBlendClumpInitGuard);
     g_config.enableRwClumpForAllAtomicsGuard = ReadBridgeBool("EnableRwClumpForAllAtomicsGuard", g_config.enableRwClumpForAllAtomicsGuard);
     g_config.enableShouldModelBeStreamedGuard = ReadBridgeBool("EnableShouldModelBeStreamedGuard", g_config.enableShouldModelBeStreamedGuard);
@@ -2210,7 +2523,7 @@ void LoadBridgeConfig()
     g_config.specialActorAutoCatalogFirstCode = ReadBridgeInt("AutoCatalogFirstCode", g_config.specialActorAutoCatalogFirstCode, 1, 999);
     g_config.specialActorMaxAutoCatalogNames = ReadBridgeInt("MaxAutoCatalogNames", g_config.specialActorMaxAutoCatalogNames, 0, static_cast<int>(kMaxRuntimeSpecialActorNames));
     g_config.specialActorCatalogBuildDelayMs = ReadBridgeInt("CatalogBuildDelayMs", g_config.specialActorCatalogBuildDelayMs, 0, 60000);
-    ReadSmallTextValue(kConfigPath, "AutoScanFilter", g_config.specialActorAutoScanFilter, sizeof(g_config.specialActorAutoScanFilter));
+    ReadSmallTextValue(g_configPath, "AutoScanFilter", g_config.specialActorAutoScanFilter, sizeof(g_config.specialActorAutoScanFilter));
     if (!g_config.specialActorAutoScanFilter[0]) {
         strncpy_s(g_config.specialActorAutoScanFilter, sizeof(g_config.specialActorAutoScanFilter),
             "SWEET;RYDER;SMOKE;SMOKEV;CESAR;ZERO;TENPEN;PULASKI;TRUTH;OGLOC;KENDL;JIZZY;MADDOGG;MACCER;WUZIMU;EMMET;JETHRO;JANITOR;CLAUDE;FORELLI;ANDRE;BB;BBTHIN;CAT;CROGRL;DNB;ROSE;SUZIE;TBONE;TORINO;HMOGAR",
@@ -2287,6 +2600,8 @@ void LoadBridgeConfig()
         g_config.enableAnimUncompressGuard = false;
         g_config.enableAnimStaticAssocGuard = false;
         g_config.enableAnimFrameUpdateGuard = false;
+        g_config.enableAnimEmptyUpdateGuard = false;
+        g_config.enableAnimLifecycleDiagnostics = false;
         g_config.enableRpAnimBlendClumpInitGuard = false;
         g_config.enableRwClumpForAllAtomicsGuard = false;
         g_config.enableShouldModelBeStreamedGuard = false;
@@ -2327,15 +2642,6 @@ void LoadBridgeConfig()
         g_config.enableMixSetsPoolAllocateGuard = false;
     }
 
-    if ((g_config.enableCleoPlusPoolAllocateGuard ||
-         g_config.enableMixSetsPoolAllocateGuard ||
-         g_config.enableUrbanizePoolAllocateGuard ||
-         g_config.enableVehFuncsPoolAllocateGuard) &&
-        !g_config.enableDeferredPoolAllocateReplay) {
-        g_config.enableDeferredPoolAllocateReplay = true;
-        Log("pool guard config: forced EnableDeferredPoolAllocateReplay=1 because targeted ExtendedData pool guards are enabled");
-    }
-
     if (g_config.specialActorMaxModelId < g_config.specialActorMinModelId) {
         g_config.specialActorMaxModelId = g_config.specialActorMinModelId;
     }
@@ -2355,13 +2661,16 @@ void LogBridgeConfig()
         g_config.enableUrbanizeCompat ? 1 : 0,
         g_config.enableTaxi77Compat ? 1 : 0,
         g_config.enableSanPabloCompat ? 1 : 0);
-    Log("bridge config: modulePolicy=%d legacyAllowlist='%s' modernDenylist='%s' forceNoRuntimeRewrite='%s' forceNoAutoPoolGuard='%s' properShadersCompat=%d",
+    Log("bridge config: modulePolicy=%d legacyAllowlist='%s' modernDenylist='%s' forceNoRuntimeRewrite='%s' forceNoAutoPoolGuard='%s' properShadersCompat=%d properShadersRenderStateGuard=%d properShadersStateRingTrace=%d triggerVK=%d",
         g_config.enableModulePolicy ? 1 : 0,
         g_config.legacyModuleAllowlist,
         g_config.modernModuleDenylist,
         g_config.forceNoRuntimeRewrite,
         g_config.forceNoAutoPoolGuard,
-        g_config.enableProperShadersCompat ? 1 : 0);
+        g_config.enableProperShadersCompat ? 1 : 0,
+        g_config.enableProperShadersRenderStateGuard ? 1 : 0,
+        g_config.enableProperShadersStateRingTrace ? 1 : 0,
+        g_config.properShadersStateRingTriggerVirtualKey);
     Log("bridge config: VEH=%d exceptionDiag=%d boundCentreVEH=%d ptrNodeGuard=%d loopBreaker=%d loopTerminate=%d loopThreshold=%d maxExceptionLogs=%d moduleSnapshot=%d riskScan=%d relocatedDiag=%d poolDiag=%d populationPoolDiag=%d populationDelay=%d populationInterval=%d populationIterations=%d crashClass=%d rewriteAudit=%d olaOverlapAudit=%d pathNodeDiag=%d olaSaGuard=%d olaModuleGuard=%d olaSaAllowlist='%s' rewrite=%d rewriteRescan=%d rewriteRuleTable=%d rewriteRules=%u rescanDelay=%d rescanIterations=%d rescanInterval=%d defaultMaxPatches=%d allowlist='%s' denylist='%s'",
         g_config.enableVectoredExceptionHandler ? 1 : 0,
         g_config.enableExceptionDiagnostics ? 1 : 0,
@@ -2478,6 +2787,10 @@ void LogBridgeConfig()
         g_config.taxi77StartLabelOffset,
         g_config.taxi77ActiveMinOffset,
         g_config.taxi77ActiveMaxOffset);
+    Log("bridge config: animHeavyFrameGuard=%d animEmptyUpdateGuard=%d animLifecycleDiagnostics=%d",
+        g_config.enableAnimFrameUpdateGuard ? 1 : 0,
+        g_config.enableAnimEmptyUpdateGuard ? 1 : 0,
+        g_config.enableAnimLifecycleDiagnostics ? 1 : 0);
     Log("bridge config: pickupModelLoadGuard=%d pickupProtectHighIds=%d pickupAllowlist='%s' pickupFlags=0x%X pickupLoadNow=%d pickupMaxLogs=%d",
         g_config.enablePickupModelLoadGuard ? 1 : 0,
         g_config.pickupModelLoadGuardProtectHighIds ? 1 : 0,
@@ -2490,7 +2803,7 @@ void LogBridgeConfig()
 void LogIniValue(const char* key)
 {
     char value[128]{};
-    if (ReadSmallTextValue("fastman92limitAdjuster_GTASA.ini", key, value, sizeof(value))) {
+    if (ReadSmallTextValue(g_flaIniPath, key, value, sizeof(value))) {
         Log("FLA ini: %s = %s", key, value);
     }
 }
@@ -2581,9 +2894,9 @@ void LogFlaPathNodeDiagnostics()
 
     char pathPatchText[64]{};
     char pathDebugText[64]{};
-    const bool pathPatch = ReadSmallTextValue("fastman92limitAdjuster_GTASA.ini", "Apply paths limit patch", pathPatchText, sizeof(pathPatchText)) &&
+    const bool pathPatch = ReadSmallTextValue(g_flaIniPath, "Apply paths limit patch", pathPatchText, sizeof(pathPatchText)) &&
         IniValueLooksEnabled(pathPatchText);
-    const bool pathDebug = ReadSmallTextValue("fastman92limitAdjuster_GTASA.ini", "Enable path debugging", pathDebugText, sizeof(pathDebugText)) &&
+    const bool pathDebug = ReadSmallTextValue(g_flaIniPath, "Enable path debugging", pathDebugText, sizeof(pathDebugText)) &&
         IniValueLooksEnabled(pathDebugText);
 
     uint32_t looseNodes = 0;
@@ -2692,7 +3005,7 @@ bool FlaOwnsOlaSaLimit(const OlaSaOverlapSpec& spec)
     }
 
     char value[128]{};
-    if (!ReadSmallTextValue("fastman92limitAdjuster_GTASA.ini", spec.flaKey, value, sizeof(value))) {
+    if (!ReadSmallTextValue(g_flaIniPath, spec.flaKey, value, sizeof(value))) {
         return false;
     }
 
@@ -3081,21 +3394,23 @@ void GuardOpenLimitAdjusterSaLimitsAtPath(const char* path, const char* phase)
         return;
     }
 
-    if (GetFileAttributesA(path) == INVALID_FILE_ATTRIBUTES) {
-        Log("OLA SA limit guard: config not found path=%s phase=%s", path, phase ? phase : "");
+    char resolvedPath[MAX_PATH]{};
+    ResolveGamePath(path, resolvedPath, sizeof(resolvedPath));
+    if (!resolvedPath[0] || GetFileAttributesA(resolvedPath) == INVALID_FILE_ATTRIBUTES) {
+        Log("OLA SA limit guard: config not found path=%s phase=%s", resolvedPath[0] ? resolvedPath : path, phase ? phase : "");
         return;
     }
 
-    HANDLE file = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+    HANDLE file = CreateFileA(resolvedPath, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
         nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file == INVALID_HANDLE_VALUE) {
-        Log("OLA SA limit guard: open failed path=%s gle=%lu phase=%s", path, GetLastError(), phase ? phase : "");
+        Log("OLA SA limit guard: open failed path=%s gle=%lu phase=%s", resolvedPath, GetLastError(), phase ? phase : "");
         return;
     }
 
     const DWORD fileSize = GetFileSize(file, nullptr);
     if (fileSize == INVALID_FILE_SIZE || fileSize > 1024 * 1024) {
-        Log("OLA SA limit guard: refusing file size=%lu path=%s phase=%s", fileSize, path, phase ? phase : "");
+        Log("OLA SA limit guard: refusing file size=%lu path=%s phase=%s", fileSize, resolvedPath, phase ? phase : "");
         CloseHandle(file);
         return;
     }
@@ -3105,7 +3420,7 @@ void GuardOpenLimitAdjusterSaLimitsAtPath(const char* path, const char* phase)
     const BOOL readOk = ReadFile(file, input, fileSize, &bytesRead, nullptr);
     CloseHandle(file);
     if (!readOk) {
-        Log("OLA SA limit guard: read failed path=%s gle=%lu phase=%s", path, GetLastError(), phase ? phase : "");
+        Log("OLA SA limit guard: read failed path=%s gle=%lu phase=%s", resolvedPath, GetLastError(), phase ? phase : "");
         delete[] input;
         return;
     }
@@ -3205,17 +3520,19 @@ void GuardOpenLimitAdjusterSaLimitsAtPath(const char* path, const char* phase)
     }
 
     if (!appendOk) {
-        Log("OLA SA limit guard: output buffer exhausted path=%s phase=%s", path, phase ? phase : "");
+        Log("OLA SA limit guard: output buffer exhausted path=%s phase=%s", resolvedPath, phase ? phase : "");
         delete[] output;
         delete[] input;
         return;
     }
 
     if (disabled > 0 || removedAutoComments > 0) {
-        CopyFileA(path, "modloader\\OLA\\III.VC.SA.LimitAdjuster.ini.fla++bak", FALSE);
+        char backupPath[MAX_PATH]{};
+        sprintf_s(backupPath, "%s.fla++bak", resolvedPath);
+        CopyFileA(resolvedPath, backupPath, FALSE);
 
         char tempPath[MAX_PATH]{};
-        sprintf_s(tempPath, "%s.fla++tmp", path);
+        sprintf_s(tempPath, "%s.fla++tmp", resolvedPath);
         HANDLE outFile = CreateFileA(tempPath, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
         if (outFile == INVALID_HANDLE_VALUE) {
             Log("OLA SA limit guard: temp open failed path=%s gle=%lu phase=%s", tempPath, GetLastError(), phase ? phase : "");
@@ -3241,10 +3558,10 @@ void GuardOpenLimitAdjusterSaLimitsAtPath(const char* path, const char* phase)
             return;
         }
 
-        if (!MoveFileExA(tempPath, path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED)) {
+        if (!MoveFileExA(tempPath, resolvedPath, MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED)) {
             Log("OLA SA limit guard: replace failed temp=%s path=%s gle=%lu phase=%s",
                 tempPath,
-                path,
+                resolvedPath,
                 GetLastError(),
                 phase ? phase : "");
             DeleteFileA(tempPath);
@@ -3259,7 +3576,7 @@ void GuardOpenLimitAdjusterSaLimitsAtPath(const char* path, const char* phase)
         allowed,
         alreadyCommented,
         removedAutoComments,
-        path,
+        resolvedPath,
         phase ? phase : "");
 
     delete[] output;
@@ -3285,8 +3602,10 @@ void AuditOpenLimitAdjusterSaOverlapsAtPath(const char* path)
         return;
     }
 
-    if (GetFileAttributesA(path) == INVALID_FILE_ATTRIBUTES) {
-        Log("OLA overlap audit: config not found path=%s", path);
+    char resolvedPath[MAX_PATH]{};
+    ResolveGamePath(path, resolvedPath, sizeof(resolvedPath));
+    if (!resolvedPath[0] || GetFileAttributesA(resolvedPath) == INVALID_FILE_ATTRIBUTES) {
+        Log("OLA overlap audit: config not found path=%s", resolvedPath[0] ? resolvedPath : path);
         return;
     }
 
@@ -3295,7 +3614,7 @@ void AuditOpenLimitAdjusterSaOverlapsAtPath(const char* path)
     int allowed = 0;
     for (const OlaSaOverlapSpec& spec : kOlaSaOverlapSpecs) {
         char value[128]{};
-        if (!ReadSectionTextValue(path, "SALIMITS", spec.key, value, sizeof(value))) {
+        if (!ReadSectionTextValue(resolvedPath, "SALIMITS", spec.key, value, sizeof(value))) {
             continue;
         }
         if (!IniValueLooksEnabled(value)) {
@@ -3349,8 +3668,7 @@ bool IsOpenLimitAdjusterAddress(uintptr_t address)
 
     char moduleName[MAX_PATH]{};
     ModuleBaseFromAddress(address, moduleName, sizeof(moduleName));
-    return ContainsCaseInsensitive(moduleName, "iii.vc.sa.limitadjuster") ||
-        ContainsCaseInsensitive(moduleName, "limitadjuster.asi");
+    return _stricmp(BaseName(moduleName), "III.VC.SA.LimitAdjuster.asi") == 0;
 }
 
 bool PatchEntryLooksOpenLimitAdjusterOwned(uintptr_t address)
@@ -3402,77 +3720,16 @@ bool RestoreOpenLimitAdjusterPatchIfOwned(const char* label, uintptr_t address, 
 
 int RepairOpenLimitAdjusterSaPoolHooks(const char* phase)
 {
-    if (!g_config.enableOpenLimitAdjusterSaLimitGuard) {
-        return 0;
+    static LONG logOnce = 0;
+    if (InterlockedCompareExchange(&logOnce, 1, 0) == 0) {
+        Log("OLA hook repair: runtime vanilla-byte restoration disabled; FLA hooks remain authoritative phase=%s",
+            phase ? phase : "");
     }
-
-    static const uint8_t ptrNodeSingleAlloc[] = {
-        0x8B, 0x0D, 0x84, 0x44, 0xB7, 0x00, 0xE9, 0xB5,
-        0xFE, 0xFF, 0xFF, 0x90, 0x90, 0x90, 0x90, 0x90
-    };
-    static const uint8_t ptrNodeSingleRelease[] = {
-        0x90, 0xE9, 0xF7, 0x77, 0xEB, 0xFF, 0x8B, 0x44,
-        0x24, 0x04, 0x53, 0x2B, 0x01, 0x8B, 0xD1, 0x8B,
-        0x49, 0x04, 0xC1, 0xF8, 0x03, 0x8A, 0x1C, 0x01,
-        0x03, 0xC8, 0x80, 0xCB, 0x80, 0x88, 0x19, 0x3B,
-        0x42, 0x0C, 0x5B, 0x7D, 0x03, 0x89, 0x42, 0x0C,
-        0xC3, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90
-    };
-    static const uint8_t ptrNodeDoubleAlloc[] = {
-        0x8B, 0x0D, 0x88, 0x44, 0xB7, 0x00, 0xE9, 0x15,
-        0xFF, 0xFF, 0xFF, 0x90, 0x90, 0x90, 0x90, 0x90
-    };
-    static const uint8_t ptrNodeDoubleRelease[] = {
-        0x8B, 0x4C, 0x24, 0x04, 0x56, 0x8B, 0x35, 0x88,
-        0x44, 0xB7, 0x00, 0x2B, 0x0E, 0xB8, 0xAB, 0xAA
-    };
-    static const uint8_t ptrNodeSingleInlineRelease[] = {
-        0x8B, 0x15, 0x84, 0x44, 0xB7, 0x00, 0x8B, 0x3A,
-        0x8B, 0xF2, 0x8B, 0x52, 0x04, 0x2B, 0xC7, 0xC1,
-        0xF8, 0x03, 0x80, 0x0C, 0x02, 0x80, 0x03, 0xD0,
-        0x3B, 0x46, 0x0C, 0x7D, 0x03, 0x89, 0x46, 0x0C
-    };
-    static const uint8_t ptrNodeDoubleInlineRelease[] = {
-        0x8B, 0x35, 0x88, 0x44, 0xB7, 0x00, 0x2B, 0x06,
-        0x8B, 0xD0, 0xB8, 0xAB, 0xAA, 0xAA, 0x2A, 0xF7,
-        0xEA, 0xD1, 0xFA, 0x8B, 0xC2, 0xC1, 0xE8, 0x1F,
-        0x03, 0xD0, 0x8B, 0x46, 0x04, 0x8A, 0x1C, 0x10,
-        0x03, 0xC2, 0x80, 0xCB, 0x80, 0x88, 0x18, 0x3B,
-        0x56, 0x0C, 0x7D, 0x03, 0x89, 0x56, 0x0C
-    };
-
-    int restored = 0;
-    restored += RestoreOpenLimitAdjusterPatchIfOwned("PtrNodeSingle::operator new", 0x00552380, ptrNodeSingleAlloc, sizeof(ptrNodeSingleAlloc), phase) ? 1 : 0;
-    restored += RestoreOpenLimitAdjusterPatchIfOwned("PtrNodeSingle::operator delete", 0x00552390, ptrNodeSingleRelease, sizeof(ptrNodeSingleRelease), phase) ? 1 : 0;
-    restored += RestoreOpenLimitAdjusterPatchIfOwned("PtrNodeDouble::operator new", 0x005523C0, ptrNodeDoubleAlloc, sizeof(ptrNodeDoubleAlloc), phase) ? 1 : 0;
-    restored += RestoreOpenLimitAdjusterPatchIfOwned("PtrNodeDouble::operator delete", 0x005523D0, ptrNodeDoubleRelease, sizeof(ptrNodeDoubleRelease), phase) ? 1 : 0;
-    restored += RestoreOpenLimitAdjusterPatchIfOwned("PtrNodeSingle inline release", 0x0055243B, ptrNodeSingleInlineRelease, sizeof(ptrNodeSingleInlineRelease), phase) ? 1 : 0;
-    restored += RestoreOpenLimitAdjusterPatchIfOwned("PtrNodeDouble inline release", 0x005524A9, ptrNodeDoubleInlineRelease, sizeof(ptrNodeDoubleInlineRelease), phase) ? 1 : 0;
-    return restored;
+    return 0;
 }
 
 DWORD WINAPI OpenLimitAdjusterRepairThread(void*)
 {
-    bool loggedModule = false;
-    int totalRestored = 0;
-
-    for (int attempt = 0; attempt < 600; ++attempt) {
-        HMODULE module = GetModuleHandleA("III.VC.SA.LimitAdjuster.asi");
-        if (module && !loggedModule) {
-            loggedModule = true;
-            Log("OLA hook repair monitor: module loaded base=%p attempt=%d", module, attempt);
-        }
-
-        const int restored = RepairOpenLimitAdjusterSaPoolHooks("ola-repair-monitor");
-        if (restored > 0) {
-            totalRestored += restored;
-            Log("OLA hook repair monitor: restored=%d total=%d attempt=%d", restored, totalRestored, attempt);
-        }
-
-        Sleep(attempt < 120 ? 100 : 1000);
-    }
-
-    Log("OLA hook repair monitor: finished totalRestored=%d moduleSeen=%d", totalRestored, loggedModule ? 1 : 0);
     return 0;
 }
 
@@ -3482,7 +3739,7 @@ bool ReadLogAddress(const char* prefix, uintptr_t* out)
         return false;
     }
 
-    HANDLE file = CreateFileA("fastman92limitAdjuster.log", GENERIC_READ,
+    HANDLE file = CreateFileA(g_flaLogPath, GENERIC_READ,
         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
         nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file == INVALID_HANDLE_VALUE) {
@@ -3493,6 +3750,29 @@ bool ReadLogAddress(const char* prefix, uintptr_t* out)
             Log("FLA log read: open failed gle=%lu", error);
         }
         return false;
+    }
+
+    FILETIME logWriteTime{};
+    FILETIME processCreateTime{};
+    FILETIME processExitTime{};
+    FILETIME processKernelTime{};
+    FILETIME processUserTime{};
+    if (GetFileTime(file, nullptr, nullptr, &logWriteTime) &&
+        GetProcessTimes(GetCurrentProcess(), &processCreateTime, &processExitTime, &processKernelTime, &processUserTime)) {
+        ULARGE_INTEGER logWrite{};
+        ULARGE_INTEGER processCreate{};
+        logWrite.LowPart = logWriteTime.dwLowDateTime;
+        logWrite.HighPart = logWriteTime.dwHighDateTime;
+        processCreate.LowPart = processCreateTime.dwLowDateTime;
+        processCreate.HighPart = processCreateTime.dwHighDateTime;
+        if (logWrite.QuadPart < processCreate.QuadPart) {
+            static LONG staleLogCount = 0;
+            if (InterlockedIncrement(&staleLogCount) == 1) {
+                Log("FLA log read: stale file ignored path=%s", g_flaLogPath);
+            }
+            CloseHandle(file);
+            return false;
+        }
     }
 
     LARGE_INTEGER size{};
@@ -3659,7 +3939,7 @@ bool ReadLogAddress_Old(const char* prefix, uintptr_t* out)
     }
 
     FILE* file = nullptr;
-    if (fopen_s(&file, "fastman92limitAdjuster.log", "r") != 0 || !file) {
+    if (fopen_s(&file, g_flaLogPath, "r") != 0 || !file) {
         return false;
     }
 
@@ -3687,6 +3967,48 @@ bool ReadLogAddress_Old(const char* prefix, uintptr_t* out)
     return found;
 }
 #endif
+
+DWORD FindProcessMainThreadId()
+{
+    const DWORD processId = GetCurrentProcessId();
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) {
+        return 0;
+    }
+
+    DWORD result = 0;
+    ULARGE_INTEGER earliest{};
+    earliest.QuadPart = ~0ull;
+    THREADENTRY32 entry{};
+    entry.dwSize = sizeof(entry);
+    if (Thread32First(snapshot, &entry)) {
+        do {
+            if (entry.th32OwnerProcessID != processId) {
+                continue;
+            }
+
+            HANDLE thread = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, FALSE, entry.th32ThreadID);
+            if (!thread) {
+                continue;
+            }
+
+            FILETIME created{}, exited{}, kernel{}, user{};
+            if (GetThreadTimes(thread, &created, &exited, &kernel, &user)) {
+                ULARGE_INTEGER createdValue{};
+                createdValue.LowPart = created.dwLowDateTime;
+                createdValue.HighPart = created.dwHighDateTime;
+                if (createdValue.QuadPart < earliest.QuadPart) {
+                    earliest = createdValue;
+                    result = entry.th32ThreadID;
+                }
+            }
+            CloseHandle(thread);
+        } while (Thread32Next(snapshot, &entry));
+    }
+
+    CloseHandle(snapshot);
+    return result;
+}
 
 uintptr_t ModuleBaseFromAddress(uintptr_t address, char* moduleName, size_t moduleNameSize)
 {
@@ -3816,7 +4138,7 @@ void LogStackModules(uintptr_t esp)
 
 bool SafeReadU32(uintptr_t address, uint32_t* out)
 {
-    if (!out || !IsReadableCommitted(address, sizeof(uint32_t))) {
+    if (!out || !address) {
         return false;
     }
 
@@ -3831,7 +4153,7 @@ bool SafeReadU32(uintptr_t address, uint32_t* out)
 
 bool SafeReadU8(uintptr_t address, uint8_t* out)
 {
-    if (!out || !IsReadableCommitted(address, sizeof(uint8_t))) {
+    if (!out || !address) {
         return false;
     }
 
@@ -3846,7 +4168,7 @@ bool SafeReadU8(uintptr_t address, uint8_t* out)
 
 bool SafeReadF32(uintptr_t address, float* out)
 {
-    if (!out || !IsReadableCommitted(address, sizeof(float))) {
+    if (!out || !address) {
         return false;
     }
 
@@ -5233,10 +5555,9 @@ DWORD WINAPI PedStreamingZoneRepairThread(void*)
 
     LogStreamingPedFunctionEntryDiagnostics("ped-zone-repair-start");
 
-    int callCount = 0;
+    int wouldTriggerCount = 0;
     int triggerLogCount = 0;
     int skippedRetLogs = 0;
-    bool loggedEntryAfterFailure = false;
 
     for (int i = 0; i < g_config.pedStreamingZoneRepairIterations; ++i) {
         const int sample = i + 1;
@@ -5261,9 +5582,8 @@ DWORD WINAPI PedStreamingZoneRepairThread(void*)
         uint8_t firstByte = 0;
         const bool entryReadable = SafeReadU8(kCStreamingStreamZoneModels, &firstByte);
         const bool entryRet = entryReadable && firstByte == 0xC3;
-        const bool shouldTry =
-            g_config.pedStreamingZoneRepairCallOriginal &&
-            callCount < g_config.pedStreamingZoneRepairMaxCalls &&
+        const bool wouldTrigger =
+            wouldTriggerCount < g_config.pedStreamingZoneRepairMaxCalls &&
             popZone != 0xFFFFFFFFu &&
             streamZone == 0xFFFFFFFFu &&
             msPeds == 0 &&
@@ -5282,16 +5602,16 @@ DWORD WINAPI PedStreamingZoneRepairThread(void*)
 
         const bool shouldLog =
             triggerLogCount < g_config.pedStreamingZoneRepairMaxLogs &&
-            (sample == 1 || sample <= 3 || shouldTry || (sample % 15) == 0 ||
+            (sample == 1 || sample <= 3 || wouldTrigger || (sample % 15) == 0 ||
              (popZone != 0xFFFFFFFFu && streamZone == 0xFFFFFFFFu && msPeds == 0));
 
         if (shouldLog) {
             ++triggerLogCount;
-            Log("ped zone repair: sample=%d/%d shouldTry=%d calls=%d streamZone=%u popZone=%u msPeds=%u zoneInfo=0x%08X zoneCheats=0x%02X requested=%u priorityReq=%u loadingPriority=%d disableStreaming=%d cutscene=%d replayMode=%d currArea=0x%08X player=0x%08X playerPosOk=%d playerPos=%.1f,%.1f,%.1f playerMatrix=0x%08X matrixPos=%d entryReadable=%d entryByte=0x%02X",
+            Log("ped zone repair: sample=%d/%d wouldTrigger=%d offThreadCall=0 candidates=%d streamZone=%u popZone=%u msPeds=%u zoneInfo=0x%08X zoneCheats=0x%02X requested=%u priorityReq=%u loadingPriority=%d disableStreaming=%d cutscene=%d replayMode=%d currArea=0x%08X player=0x%08X playerPosOk=%d playerPos=%.1f,%.1f,%.1f playerMatrix=0x%08X matrixPos=%d entryReadable=%d entryByte=0x%02X",
                 sample,
                 g_config.pedStreamingZoneRepairIterations,
-                shouldTry ? 1 : 0,
-                callCount,
+                wouldTrigger ? 1 : 0,
+                wouldTriggerCount,
                 streamZone,
                 popZone,
                 msPeds,
@@ -5321,56 +5641,19 @@ DWORD WINAPI PedStreamingZoneRepairThread(void*)
             LogStreamingPedFunctionEntryDiagnostics("ped-zone-repair-entry-ret");
         }
 
-        if (shouldTry) {
-            const uint32_t beforeStreamZone = streamZone;
-            const uint32_t beforeMsPeds = msPeds;
-            bool callOk = false;
-            using StreamZoneModelsFn = void(__cdecl*)(const RuntimeVec3*);
-            auto streamZoneModels = reinterpret_cast<StreamZoneModelsFn>(kCStreamingStreamZoneModels);
-
-            __try {
-                streamZoneModels(&playerPos);
-                callOk = true;
-            }
-            __except (EXCEPTION_EXECUTE_HANDLER) {
-                callOk = false;
-            }
-
-            ++callCount;
-            const uint32_t afterStreamZone = ReadRuntimeU32ForLog(kStreamingCurrentZoneType);
-            const uint32_t afterMsPeds = ReadRuntimeU32ForLog(kStreamingNumPedsLoaded);
-            Log("ped zone repair: called StreamZoneModels sample=%d call=%d ok=%d before streamZone=%u msPeds=%u after streamZone=%u msPeds=%u popZone=%u playerPos=%.1f,%.1f,%.1f",
-                sample,
-                callCount,
-                callOk ? 1 : 0,
-                beforeStreamZone,
-                beforeMsPeds,
-                afterStreamZone,
-                afterMsPeds,
-                popZone,
-                playerPos.x,
-                playerPos.y,
-                playerPos.z);
-
-            if (g_config.enablePopulationPoolDiagnostics ||
-                triggerLogCount < g_config.pedStreamingZoneRepairMaxLogs ||
-                afterMsPeds == 0 ||
-                afterStreamZone == 0xFFFFFFFFu) {
-                LogPopulationStreamingPedSlots("ped-zone-repair-after", sample);
-            }
-
-            if (!callOk && !loggedEntryAfterFailure) {
-                loggedEntryAfterFailure = true;
-                LogStreamingPedFunctionEntryDiagnostics("ped-zone-repair-call-exception");
+        if (wouldTrigger) {
+            ++wouldTriggerCount;
+            if (g_config.enablePopulationPoolDiagnostics) {
+                LogPopulationStreamingPedSlots("ped-zone-repair-diagnostic", sample);
             }
         }
 
         Sleep(static_cast<DWORD>(g_config.pedStreamingZoneRepairIntervalMs));
     }
 
-    Log("ped zone repair: completed iterations=%d calls=%d logs=%d",
+    Log("ped zone repair: completed iterations=%d offThreadCalls=0 candidates=%d logs=%d",
         g_config.pedStreamingZoneRepairIterations,
-        callCount,
+        wouldTriggerCount,
         triggerLogCount);
     return 0;
 }
@@ -5378,7 +5661,7 @@ DWORD WINAPI PedStreamingZoneRepairThread(void*)
 uint32_t ReadIniU32(const char* key, uint32_t defaultValue)
 {
     char value[64]{};
-    if (!ReadSmallTextValue("fastman92limitAdjuster_GTASA.ini", key, value, sizeof(value))) {
+    if (!ReadSmallTextValue(g_flaIniPath, key, value, sizeof(value))) {
         return defaultValue;
     }
 
@@ -5442,6 +5725,12 @@ bool ResolveFlaExtendedIdApi()
 {
     if (!g_config.enableFlaExtendedIdApi) {
         return false;
+    }
+
+    // FLA remains loaded for the lifetime of gta_sa.exe. Avoid resolving its
+    // module again on hot paths such as entity bounds and streaming checks.
+    if (g_flaExtendedIdApi.resolved && g_flaExtendedIdApi.module) {
+        return g_flaExtendedIdApi.getExtendedIDFrom16BitBefore != nullptr;
     }
 
     HMODULE module = FindFlaModule();
@@ -5640,17 +5929,21 @@ bool RefreshFlaRuntimeStateFromAbi()
     return usedAbi;
 }
 
-void RefreshFlaRuntimeState()
+void RefreshFlaRuntimeState(bool logState)
 {
     const bool usedAbi = RefreshFlaRuntimeStateFromAbi();
 
     bool usedLog = false;
     uintptr_t logAddress = 0;
-    if (!g_relocatedCModelInfoPtrs && ReadLogAddress("CModelInfo::ms_modelInfoPtrs:", &logAddress)) {
+    if (!g_relocatedCModelInfoPtrs &&
+        ReadLogAddress("CModelInfo::ms_modelInfoPtrs:", &logAddress) &&
+        IsReadableCommitted(logAddress, sizeof(uintptr_t))) {
         g_relocatedCModelInfoPtrs = logAddress;
         usedLog = true;
     }
-    if (!g_relocatedStreamingInfo && ReadLogAddress("CStreaming::ms_aInfoForModel:", &logAddress)) {
+    if (!g_relocatedStreamingInfo &&
+        ReadLogAddress("CStreaming::ms_aInfoForModel:", &logAddress) &&
+        IsReadableCommitted(logAddress, kStreamingInfoSize)) {
         g_relocatedStreamingInfo = logAddress;
         usedLog = true;
     }
@@ -5695,27 +5988,97 @@ void RefreshFlaRuntimeState()
     g_colModelPoolCapacity = ReadIniU32("ColModels", 10150);
     g_collisionStoreCapacity = ReadIniU32("Collision size", ReadIniU32("FILE_TYPE_COL", 500));
 
-    Log("runtime state: source=%u abi=%u flags=0x%08X fileIdCapacity=%u CModelInfo=0x%08X CStreaming=0x%08X CStreamingExt=0x%08X AnimBlocks=0x%08X VehicleRecording=0x%08X StreamedScripts=0x%08X Handling=0x%08X RegisteredKills=0x%08X",
-        g_runtimeStateSource,
-        g_flaAbiVersion,
-        g_flaCompatFlags,
-        g_fileIdCapacity,
+    if (logState) {
+        Log("runtime state: source=%u abi=%u flags=0x%08X fileIdCapacity=%u CModelInfo=0x%08X CStreaming=0x%08X CStreamingExt=0x%08X AnimBlocks=0x%08X VehicleRecording=0x%08X StreamedScripts=0x%08X Handling=0x%08X RegisteredKills=0x%08X",
+            g_runtimeStateSource,
+            g_flaAbiVersion,
+            g_flaCompatFlags,
+            g_fileIdCapacity,
+            g_relocatedCModelInfoPtrs,
+            g_relocatedStreamingInfo,
+            g_relocatedStreamingInfoExtension,
+            g_relocatedAnimBlocks,
+            g_relocatedVehicleRecordingStreamingArray,
+            g_relocatedStreamedScripts,
+            g_relocatedHandlingManager,
+            g_relocatedRegisteredKills);
+        Log("runtime state: poolCapacity peds=%u vehicles=%u objects=%u buildings=%u dummies=%u colModels=%u colStore=%u",
+            g_pedPoolCapacity,
+            g_vehiclePoolCapacity,
+            g_objectPoolCapacity,
+            g_buildingPoolCapacity,
+            g_dummyPoolCapacity,
+            g_colModelPoolCapacity,
+            g_collisionStoreCapacity);
+    }
+}
+
+bool TryRecoverCriticalFlaRuntimeAddresses()
+{
+    RefreshFlaRuntimeStateFromAbi();
+
+    bool usedLog = false;
+    uintptr_t logAddress = 0;
+    if (!g_relocatedCModelInfoPtrs &&
+        ReadLogAddress("CModelInfo::ms_modelInfoPtrs:", &logAddress) &&
+        IsReadableCommitted(logAddress, sizeof(uintptr_t))) {
+        g_relocatedCModelInfoPtrs = logAddress;
+        usedLog = true;
+    }
+    if (!g_relocatedStreamingInfo &&
+        ReadLogAddress("CStreaming::ms_aInfoForModel:", &logAddress) &&
+        IsReadableCommitted(logAddress, kStreamingInfoSize)) {
+        g_relocatedStreamingInfo = logAddress;
+        usedLog = true;
+    }
+    if (usedLog && g_runtimeStateSource != RUNTIME_SOURCE_FLA_ABI) {
+        g_runtimeStateSource = RUNTIME_SOURCE_FLA_LOG;
+    }
+
+    return g_relocatedCModelInfoPtrs && g_relocatedStreamingInfo;
+}
+
+DWORD WINAPI FlaRuntimeStateRecoveryThread(void*)
+{
+    for (int attempt = 0; attempt < 200; ++attempt) {
+        if (TryRecoverCriticalFlaRuntimeAddresses()) {
+            Log("FLA runtime recovery: resolved attempt=%d CModelInfo=0x%08X CStreaming=0x%08X log=%s ini=%s",
+                attempt + 1,
+                g_relocatedCModelInfoPtrs,
+                g_relocatedStreamingInfo,
+                g_flaLogPath,
+                g_flaIniPath);
+            RefreshFlaRuntimeState(true);
+            if (g_config.enableProperShadersCompat) {
+                ApplyProperShadersCompat();
+            }
+            return 0;
+        }
+
+        Sleep(attempt < 80 ? 25 : 100);
+    }
+
+    Log("FLA runtime recovery: unresolved after retries CModelInfo=0x%08X CStreaming=0x%08X log=%s",
         g_relocatedCModelInfoPtrs,
         g_relocatedStreamingInfo,
-        g_relocatedStreamingInfoExtension,
-        g_relocatedAnimBlocks,
-        g_relocatedVehicleRecordingStreamingArray,
-        g_relocatedStreamedScripts,
-        g_relocatedHandlingManager,
-        g_relocatedRegisteredKills);
-    Log("runtime state: poolCapacity peds=%u vehicles=%u objects=%u buildings=%u dummies=%u colModels=%u colStore=%u",
-        g_pedPoolCapacity,
-        g_vehiclePoolCapacity,
-        g_objectPoolCapacity,
-        g_buildingPoolCapacity,
-        g_dummyPoolCapacity,
-        g_colModelPoolCapacity,
-        g_collisionStoreCapacity);
+        g_flaLogPath);
+    return 0;
+}
+
+void StartFlaRuntimeStateRecovery()
+{
+    if ((g_relocatedCModelInfoPtrs && g_relocatedStreamingInfo) ||
+        InterlockedCompareExchange(&g_flaRuntimeRecoveryStarted, 1, 0) != 0) {
+        return;
+    }
+
+    HANDLE thread = CreateThread(nullptr, 0, FlaRuntimeStateRecoveryThread, nullptr, 0, nullptr);
+    if (thread) {
+        CloseHandle(thread);
+    } else {
+        InterlockedExchange(&g_flaRuntimeRecoveryStarted, 0);
+        Log("FLA runtime recovery: thread creation failed gle=%lu", GetLastError());
+    }
 }
 
 uintptr_t SafeModelInfoEntryAddress(uint32_t modelId)
@@ -7190,6 +7553,296 @@ bool LooksLikeNeutralizedAnimAssociation(uintptr_t association)
             (flags & kAnimationBlendAutoRemove) == kAnimationBlendAutoRemove);
 }
 
+bool ReadAnimGroupSnapshot(
+    uintptr_t group,
+    uintptr_t* associationsOut,
+    uint32_t* countOut,
+    uint32_t* idOffsetOut,
+    uintptr_t* animBlockOut,
+    uint32_t* groupIndexOut)
+{
+    constexpr uintptr_t kAnimAssocGroupsPtr = 0x00B4EA34;
+    constexpr uintptr_t kNumAnimAssocDefinitions = 0x00B4EA28;
+    constexpr size_t kAssocGroupSize = 0x14;
+
+    if (!IsReadableCommitted(group, kAssocGroupSize)) {
+        return false;
+    }
+
+    uintptr_t associations = 0;
+    uint32_t count = 0;
+    uint32_t idOffset = 0;
+    uintptr_t animBlock = 0;
+    uintptr_t groups = 0;
+    uint32_t groupCount = 0;
+    __try {
+        associations = *reinterpret_cast<const uintptr_t*>(group + 0x04);
+        count = *reinterpret_cast<const uint32_t*>(group + 0x08);
+        idOffset = *reinterpret_cast<const uint32_t*>(group + 0x0C);
+        animBlock = *reinterpret_cast<const uintptr_t*>(group + 0x10);
+        groups = *reinterpret_cast<const uintptr_t*>(kAnimAssocGroupsPtr);
+        groupCount = *reinterpret_cast<const uint32_t*>(kNumAnimAssocDefinitions);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+
+    uint32_t groupIndex = UINT32_MAX;
+    if (groups && group >= groups) {
+        const uintptr_t delta = group - groups;
+        if (delta % kAssocGroupSize == 0 && delta / kAssocGroupSize < groupCount) {
+            groupIndex = static_cast<uint32_t>(delta / kAssocGroupSize);
+        }
+    }
+
+    if (associationsOut) {
+        *associationsOut = associations;
+    }
+    if (countOut) {
+        *countOut = count;
+    }
+    if (idOffsetOut) {
+        *idOffsetOut = idOffset;
+    }
+    if (animBlockOut) {
+        *animBlockOut = animBlock;
+    }
+    if (groupIndexOut) {
+        *groupIndexOut = groupIndex;
+    }
+    return true;
+}
+
+void LogInvalidStaticAssociationOwnership(const char* reason, uintptr_t staticAssociation)
+{
+    static LONG logCount = 0;
+    const LONG count = InterlockedIncrement(&logCount);
+    if (count > 32) {
+        return;
+    }
+
+    constexpr uintptr_t kAnimAssocGroupsPtr = 0x00B4EA34;
+    constexpr uintptr_t kNumAnimAssocDefinitions = 0x00B4EA28;
+    constexpr size_t kAssocGroupSize = 0x14;
+    constexpr size_t kStaticAssocSize = 0x14;
+
+    uintptr_t groups = 0;
+    uint32_t groupCount = 0;
+    __try {
+        groups = *reinterpret_cast<const uintptr_t*>(kAnimAssocGroupsPtr);
+        groupCount = *reinterpret_cast<const uint32_t*>(kNumAnimAssocDefinitions);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        groups = 0;
+        groupCount = 0;
+    }
+
+    for (uint32_t i = 0; groups && i < groupCount; ++i) {
+        const uintptr_t group = groups + static_cast<uintptr_t>(i) * kAssocGroupSize;
+        uintptr_t associations = 0;
+        uint32_t associationCount = 0;
+        uint32_t idOffset = 0;
+        uintptr_t animBlock = 0;
+        if (!ReadAnimGroupSnapshot(group, &associations, &associationCount, &idOffset, &animBlock, nullptr) ||
+            !associations || associationCount > 100000) {
+            continue;
+        }
+
+        const uintptr_t bytes = static_cast<uintptr_t>(associationCount) * kStaticAssocSize;
+        if (staticAssociation >= associations && staticAssociation - associations < bytes) {
+            Log("anim lifecycle: invalid static owner=%s source=0x%08X currentGroup=%u slot=%u id=%u groupPtr=0x%08X array=0x%08X count=%u block=0x%08X tid=%lu",
+                reason,
+                staticAssociation,
+                i,
+                static_cast<uint32_t>((staticAssociation - associations) / kStaticAssocSize),
+                idOffset + static_cast<uint32_t>((staticAssociation - associations) / kStaticAssocSize),
+                group,
+                associations,
+                associationCount,
+                animBlock,
+                GetCurrentThreadId());
+            return;
+        }
+    }
+
+    LONG newestSequence = 0;
+    AnimLifecycleRecord newest{};
+    for (size_t i = 0; i < kAnimLifecycleHistorySize; ++i) {
+        const LONG before = g_animLifecycleHistory[i].sequence;
+        if (before <= 0) {
+            continue;
+        }
+
+        AnimLifecycleRecord snapshot{};
+        snapshot.group = g_animLifecycleHistory[i].group;
+        snapshot.associations = g_animLifecycleHistory[i].associations;
+        snapshot.caller = g_animLifecycleHistory[i].caller;
+        snapshot.animBlock = g_animLifecycleHistory[i].animBlock;
+        snapshot.associationCount = g_animLifecycleHistory[i].associationCount;
+        snapshot.idOffset = g_animLifecycleHistory[i].idOffset;
+        snapshot.groupIndex = g_animLifecycleHistory[i].groupIndex;
+        snapshot.threadId = g_animLifecycleHistory[i].threadId;
+        snapshot.tick = g_animLifecycleHistory[i].tick;
+        const LONG after = g_animLifecycleHistory[i].sequence;
+        if (before != after || snapshot.associationCount > 100000 || !snapshot.associations) {
+            continue;
+        }
+
+        const uintptr_t bytes = static_cast<uintptr_t>(snapshot.associationCount) * kStaticAssocSize;
+        if (staticAssociation >= snapshot.associations && staticAssociation - snapshot.associations < bytes && after > newestSequence) {
+            newestSequence = after;
+            newest = snapshot;
+        }
+    }
+
+    if (newestSequence > 0) {
+        char moduleName[MAX_PATH]{};
+        const uintptr_t moduleBase = ModuleBaseFromAddress(newest.caller, moduleName, sizeof(moduleName));
+        Log("anim lifecycle: invalid static owner=%s source=0x%08X FREED group=%u slot=%u id=%u groupPtr=0x%08X array=0x%08X count=%u block=0x%08X freedTid=%u currentTid=%lu ageMs=%lu caller=0x%08X %s+0x%X",
+            reason,
+            staticAssociation,
+            newest.groupIndex,
+            static_cast<uint32_t>((staticAssociation - newest.associations) / kStaticAssocSize),
+            newest.idOffset + static_cast<uint32_t>((staticAssociation - newest.associations) / kStaticAssocSize),
+            newest.group,
+            newest.associations,
+            newest.associationCount,
+            newest.animBlock,
+            newest.threadId,
+            GetCurrentThreadId(),
+            GetTickCount() - newest.tick,
+            newest.caller,
+            moduleName,
+            moduleBase ? newest.caller - moduleBase : 0);
+        return;
+    }
+
+    Log("anim lifecycle: invalid static owner=%s source=0x%08X no current/freed group match tid=%lu",
+        reason,
+        staticAssociation,
+        GetCurrentThreadId());
+}
+
+extern "C" void __stdcall Bridge_LogAnimGroupDestroy(uintptr_t group, uintptr_t returnAddress)
+{
+    static LONG logCount = 0;
+    uintptr_t associations = 0;
+    uint32_t associationCount = 0;
+    uint32_t idOffset = 0;
+    uintptr_t animBlock = 0;
+    uint32_t groupIndex = UINT32_MAX;
+    if (!ReadAnimGroupSnapshot(group, &associations, &associationCount, &idOffset, &animBlock, &groupIndex)) {
+        return;
+    }
+
+    if (associations && associationCount && associationCount <= 100000) {
+        const LONG sequence = InterlockedIncrement(&g_animLifecycleCursor);
+        AnimLifecycleRecord& record = g_animLifecycleHistory[static_cast<size_t>(sequence - 1) % kAnimLifecycleHistorySize];
+        InterlockedExchange(&record.sequence, 0);
+        record.group = group;
+        record.associations = associations;
+        record.caller = returnAddress;
+        record.animBlock = animBlock;
+        record.associationCount = associationCount;
+        record.idOffset = idOffset;
+        record.groupIndex = groupIndex;
+        record.threadId = GetCurrentThreadId();
+        record.tick = GetTickCount();
+        MemoryBarrier();
+        InterlockedExchange(&record.sequence, sequence);
+    }
+
+    const LONG count = InterlockedIncrement(&logCount);
+    if (count <= 64) {
+        char moduleName[MAX_PATH]{};
+        const uintptr_t moduleBase = ModuleBaseFromAddress(returnAddress, moduleName, sizeof(moduleName));
+        Log("anim lifecycle: DestroyAssociations group=%u groupPtr=0x%08X array=0x%08X count=%u idOffset=%u block=0x%08X tid=%lu caller=0x%08X %s+0x%X",
+            groupIndex,
+            group,
+            associations,
+            associationCount,
+            idOffset,
+            animBlock,
+            GetCurrentThreadId(),
+            returnAddress,
+            moduleName,
+            moduleBase ? returnAddress - moduleBase : 0);
+    }
+}
+
+extern "C" void __stdcall Bridge_LogAnimBlockRemove(uint32_t blockIndex, uintptr_t returnAddress)
+{
+    static LONG logCount = 0;
+    constexpr uintptr_t kAnimBlocks = 0x00B5D4A0;
+    constexpr size_t kAnimBlockSize = 0x20;
+
+    char blockName[17]{};
+    uint8_t loaded = 0;
+    int16_t refCount = 0;
+    uint32_t firstAnim = 0;
+    uint32_t animCount = 0;
+    const uintptr_t block = kAnimBlocks + static_cast<uintptr_t>(blockIndex) * kAnimBlockSize;
+    if (blockIndex < 10000 && IsReadableCommitted(block, kAnimBlockSize)) {
+        __try {
+            std::memcpy(blockName, reinterpret_cast<const void*>(block), 16);
+            loaded = *reinterpret_cast<const uint8_t*>(block + 0x10);
+            refCount = *reinterpret_cast<const int16_t*>(block + 0x12);
+            firstAnim = *reinterpret_cast<const uint32_t*>(block + 0x14);
+            animCount = *reinterpret_cast<const uint32_t*>(block + 0x18);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) {
+            blockName[0] = '\0';
+        }
+    }
+
+    const LONG count = InterlockedIncrement(&logCount);
+    if (count <= 64) {
+        char moduleName[MAX_PATH]{};
+        const uintptr_t moduleBase = ModuleBaseFromAddress(returnAddress, moduleName, sizeof(moduleName));
+        Log("anim lifecycle: RemoveAnimBlock index=%u block=0x%08X name=%s loaded=%u refs=%d firstAnim=%u animCount=%u tid=%lu caller=0x%08X %s+0x%X",
+            blockIndex,
+            block,
+            blockName,
+            loaded,
+            refCount,
+            firstAnim,
+            animCount,
+            GetCurrentThreadId(),
+            returnAddress,
+            moduleName,
+            moduleBase ? returnAddress - moduleBase : 0);
+    }
+}
+
+extern "C" void __stdcall Bridge_LogEmptyAnimUpdate(uintptr_t updateData, uintptr_t clump)
+{
+    static LONG logCount = 0;
+    const LONG count = InterlockedIncrement(&logCount);
+    if (count > 32) {
+        return;
+    }
+
+    uintptr_t clumpData = 0;
+    uintptr_t firstAssociation = 0;
+    __try {
+        clumpData = *reinterpret_cast<const uintptr_t*>(0x00B4EA0C);
+        if (clumpData) {
+            firstAssociation = *reinterpret_cast<const uintptr_t*>(clumpData);
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        clumpData = 0;
+        firstAssociation = 0;
+    }
+
+    Log("anim lifecycle: skipped empty AnimBlendUpdateData updateData=0x%08X clump=0x%08X clumpData=0x%08X firstAssoc=0x%08X tid=%lu",
+        updateData,
+        clump,
+        clumpData,
+        firstAssociation,
+        GetCurrentThreadId());
+}
+
 extern "C" bool __stdcall Bridge_ShouldBlockGroupBlendAnimation(uint32_t groupId, uint32_t animId)
 {
     static LONG logCount = 0;
@@ -7239,6 +7892,8 @@ extern "C" bool __stdcall Bridge_ShouldBlockGroupBlendAnimation(uint32_t groupId
     if (Bridge_IsValidStaticAssociation(staticAssociation)) {
         return false;
     }
+
+    LogInvalidStaticAssociationOwnership("blend-entry", staticAssociation);
 
     uint16_t numBlendNodes = 0;
     uint16_t flags = 0;
@@ -7297,6 +7952,8 @@ extern "C" void __stdcall Bridge_RepairInvalidStaticAssociation(uintptr_t runtim
         }
     }
 
+    LogInvalidStaticAssociationOwnership("static-init", staticAssociation);
+
     const uintptr_t fallbackHier = Bridge_IsValidAnimHierarchy(g_lastValidAnimHierarchy) ? g_lastValidAnimHierarchy : 0;
     constexpr uint16_t kAnimationBlendAutoRemove = 0x0004;
     constexpr uint16_t kAnimationReferenceBlock = 0x4000;
@@ -7351,8 +8008,7 @@ extern "C" bool __stdcall Bridge_PrepareAnimAssociationUpdate(uintptr_t associat
 {
     static LONG logCount = 0;
 
-    const bool neutralized = IsNeutralizedAnimAssociation(association) || LooksLikeNeutralizedAnimAssociation(association);
-    if (!neutralized) {
+    if (!IsNeutralizedAnimAssociation(association)) {
         return true;
     }
 
@@ -7487,7 +8143,7 @@ extern "C" bool __stdcall Bridge_PrepareAnimFrameUpdateData(uintptr_t updateData
             valid = false;
         }
 
-        if (valid && sequence && !IsReadableCommitted(association, 0x30)) {
+        if (valid && association && !IsReadableCommitted(association, 0x30)) {
             valid = false;
         }
 
@@ -7495,17 +8151,9 @@ extern "C" bool __stdcall Bridge_PrepareAnimFrameUpdateData(uintptr_t updateData
             continue;
         }
 
-        if (IsWritableCommitted(updateData + 4 + i * sizeof(uintptr_t), sizeof(uintptr_t))) {
-            __try {
-                *reinterpret_cast<uintptr_t*>(updateData + 4 + i * sizeof(uintptr_t)) = 0;
-            }
-            __except (EXCEPTION_EXECUTE_HANDLER) {
-            }
-        }
-
         const LONG count = InterlockedIncrement(&logCount);
         if (count <= 4) {
-            Log("anim frame guard: truncated invalid BlendNodeArrays updateData=0x%08X index=%d node=0x%08X seq=0x%08X assoc=0x%08X",
+            Log("anim frame guard: skipped frame with invalid BlendNodeArrays updateData=0x%08X index=%d node=0x%08X seq=0x%08X assoc=0x%08X",
                 updateData,
                 i,
                 node,
@@ -7516,7 +8164,7 @@ extern "C" bool __stdcall Bridge_PrepareAnimFrameUpdateData(uintptr_t updateData
             LogMemoryRegion("anim-frame-assoc", association);
         }
 
-        return i > 0;
+        return false;
     }
 
     return true;
@@ -7598,6 +8246,24 @@ extern "C" bool __stdcall Bridge_ShouldSkipRpAnimBlendClumpInit(uintptr_t clump,
     return true;
 }
 
+bool IsCachedExecutableRwClumpCallback(uintptr_t callback)
+{
+    if (callback < 0x10000) {
+        return false;
+    }
+
+    const size_t slot = ((callback >> 4) ^ (callback >> 12)) & (kRwClumpCallbackCacheSize - 1);
+    if (g_rwClumpExecutableCallbacks[slot].load(std::memory_order_relaxed) == callback) {
+        return true;
+    }
+    if (!IsExecutableCommitted(callback)) {
+        return false;
+    }
+
+    g_rwClumpExecutableCallbacks[slot].store(callback, std::memory_order_relaxed);
+    return true;
+}
+
 extern "C" bool __stdcall Bridge_IsSafeRpClumpForAllAtomicsCall(
     uintptr_t clump,
     uintptr_t callback,
@@ -7607,24 +8273,29 @@ extern "C" bool __stdcall Bridge_IsSafeRpClumpForAllAtomicsCall(
 {
     const uintptr_t sentinel = clump + 0x08;
     uint32_t firstLink = 0;
-    bool valid = clump >= 0x10000 &&
-        IsReadableCommitted(clump, 0x0C) &&
-        SafeReadU32(clump + 0x08, &firstLink) &&
-        firstLink != 0;
+    bool valid = false;
 
-    if (valid && firstLink == sentinel) {
-        return true;
-    }
+    if (clump >= 0x10000) {
+        __try {
+            firstLink = *reinterpret_cast<const uint32_t*>(clump + 0x08);
+            if (firstLink == sentinel) {
+                return true;
+            }
 
-    if (valid) {
-        uint32_t nextLink = 0;
-        valid = callback >= 0x10000 &&
-            IsExecutableCommitted(callback) &&
-            firstLink >= 0x10000 &&
-            IsReadableCommitted(firstLink, sizeof(uintptr_t)) &&
-            SafeReadU32(firstLink, &nextLink) &&
-            nextLink != 0 &&
-            (nextLink == sentinel || IsReadableCommitted(nextLink, sizeof(uintptr_t)));
+            if (firstLink >= 0x10000 && IsCachedExecutableRwClumpCallback(callback)) {
+                const uint32_t nextLink = *reinterpret_cast<const uint32_t*>(firstLink);
+                if (nextLink == sentinel) {
+                    valid = true;
+                } else if (nextLink >= 0x10000) {
+                    volatile const uint32_t nextValue = *reinterpret_cast<volatile const uint32_t*>(nextLink);
+                    (void)nextValue;
+                    valid = true;
+                }
+            }
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) {
+            valid = false;
+        }
     }
 
     if (valid) {
@@ -8130,6 +8801,9 @@ bool TryEnsureCPoolsInitialised(const char* reason, bool allowEarlyRecovery)
         colFirstFree);
 
     InterlockedExchange(&g_cPoolsInitialiseRecoveryState, recovered ? 2 : -1);
+    if (recovered) {
+        Bridge_PumpDeferredPoolAllocatesAfterCorePoolInit();
+    }
     return recovered;
 }
 
@@ -8269,32 +8943,80 @@ bool EnsureLazyCPoolReady(uintptr_t poolPtr, const char* reason)
 
     const bool ready = IsValidCPool(finalPool);
     InterlockedExchange(&spec->state, ready ? 2 : -1);
-
-    if (created && ready && InterlockedCompareExchange(&g_lazyCPoolBatchDepth, 0, 0) == 0) {
-        TriggerDeferredPoolAllocatesForPool(spec->poolPtr);
+    if (ready) {
+        Bridge_PumpDeferredPoolAllocatesAfterCorePoolInit();
     }
 
     return ready;
 }
 
-void TriggerDeferredPoolAllocatesForPool(uintptr_t poolPtrAddress)
+void PumpDeferredPoolAllocatesOnGameThread(uint32_t maxCount)
 {
-    if (!poolPtrAddress || !g_config.enableDeferredPoolAllocateReplay) {
+    if (!g_config.enableDeferredPoolAllocateReplay || maxCount == 0) {
         return;
     }
 
-    DeferredPoolAllocate toRun[kMaxDeferredPoolAllocates]{};
+    const DWORD currentThreadId = GetCurrentThreadId();
+    if (g_gameThreadId && currentThreadId != g_gameThreadId) {
+        static LONG offThreadLogs = 0;
+        if (InterlockedIncrement(&offThreadLogs) <= 4) {
+            Log("auto pool guard: replay pump skipped non-game thread current=%lu game=%lu",
+                currentThreadId, g_gameThreadId);
+        }
+        return;
+    }
+
+    if (InterlockedCompareExchange(&g_deferredPoolAllocateReplayActive, 1, 0) != 0) {
+        return;
+    }
+
+    uint32_t pedPool = 0;
+    uint32_t vehiclePool = 0;
+    uint32_t objectPool = 0;
+    uint32_t colModelPool = 0;
+    if (!AreCorePoolsReadyForDeferredReplay(&pedPool, &vehiclePool, &objectPool, &colModelPool)) {
+        InterlockedExchange(&g_deferredPoolAllocateReplayActive, 0);
+        return;
+    }
+
+    constexpr uint32_t kMaxReplayPerPump = 8;
+    if (maxCount > kMaxReplayPerPump) {
+        maxCount = kMaxReplayPerPump;
+    }
+
+    DeferredPoolAllocate toRun[kMaxReplayPerPump]{};
     uint32_t runCount = 0;
+    uint32_t droppedCount = 0;
 
     EnterCriticalSection(&g_deferredPoolAllocateLock);
-    for (uint32_t i = 0; i < g_deferredPoolAllocateCount && runCount < kMaxDeferredPoolAllocates; ++i) {
+    for (uint32_t i = 0; i < g_deferredPoolAllocateCount && runCount < maxCount; ++i) {
         DeferredPoolAllocate& item = g_deferredPoolAllocates[i];
-        if (item.completed || item.poolPtrAddress != poolPtrAddress) {
+        if (item.completed) {
             continue;
         }
 
         uintptr_t pool = 0;
-        if (!SafeReadU32(item.poolPtrAddress, reinterpret_cast<uint32_t*>(&pool)) || !pool) {
+        if (!SafeReadU32(item.poolPtrAddress, reinterpret_cast<uint32_t*>(&pool)) || !IsValidCPool(pool)) {
+            continue;
+        }
+
+        char currentModule[MAX_PATH]{};
+        const uintptr_t moduleBase = ModuleBaseFromAddress(item.continueAddress, currentModule, sizeof(currentModule));
+        const bool continuationValid = moduleBase != 0 &&
+            IsExecutableCommitted(item.continueAddress) &&
+            item.moduleName[0] != '\0' &&
+            _stricmp(currentModule, item.moduleName) == 0;
+        const bool thisValid = item.thisPtr >= 0x10000 && IsWritableCommitted(item.thisPtr, sizeof(uintptr_t));
+        if (!continuationValid || !thisValid) {
+            item.completed = 1;
+            ++droppedCount;
+            Log("auto pool guard: dropped stale deferred allocate module=%s currentModule=%s continue=0x%08X this=0x%08X continuationValid=%d thisValid=%d",
+                item.moduleName,
+                currentModule,
+                item.continueAddress,
+                item.thisPtr,
+                continuationValid ? 1 : 0,
+                thisValid ? 1 : 0);
             continue;
         }
 
@@ -8305,26 +9027,53 @@ void TriggerDeferredPoolAllocatesForPool(uintptr_t poolPtrAddress)
 
     for (uint32_t i = 0; i < runCount; ++i) {
         uintptr_t pool = 0;
-        if (!SafeReadU32(toRun[i].poolPtrAddress, reinterpret_cast<uint32_t*>(&pool)) || !pool) {
+        if (!SafeReadU32(toRun[i].poolPtrAddress, reinterpret_cast<uint32_t*>(&pool)) || !IsValidCPool(pool)) {
             continue;
         }
 
         __try {
             Bridge_InvokePoolAllocateContinue(toRun[i].continueAddress, toRun[i].thisPtr, pool);
-            Log("lazy CPool registry: immediate deferred allocate module=%s pool=0x%08X continue=0x%08X this=0x%08X",
+            Log("auto pool guard: game-thread replay module=%s pool=0x%08X continue=0x%08X this=0x%08X",
                 toRun[i].moduleName,
                 pool,
                 toRun[i].continueAddress,
                 toRun[i].thisPtr);
         }
         __except (EXCEPTION_EXECUTE_HANDLER) {
-            Log("lazy CPool registry: immediate deferred allocate exception module=%s pool=0x%08X continue=0x%08X this=0x%08X",
+            Log("auto pool guard: game-thread replay exception module=%s pool=0x%08X continue=0x%08X this=0x%08X code=0x%08X",
                 toRun[i].moduleName,
                 pool,
                 toRun[i].continueAddress,
-                toRun[i].thisPtr);
+                toRun[i].thisPtr,
+                GetExceptionCode());
         }
     }
+
+    if (runCount || droppedCount) {
+        EnterCriticalSection(&g_deferredPoolAllocateLock);
+        uint32_t writeIndex = 0;
+        for (uint32_t readIndex = 0; readIndex < g_deferredPoolAllocateCount; ++readIndex) {
+            if (!g_deferredPoolAllocates[readIndex].completed) {
+                if (writeIndex != readIndex) {
+                    g_deferredPoolAllocates[writeIndex] = g_deferredPoolAllocates[readIndex];
+                }
+                ++writeIndex;
+            }
+        }
+        for (uint32_t i = writeIndex; i < g_deferredPoolAllocateCount; ++i) {
+            g_deferredPoolAllocates[i] = DeferredPoolAllocate{};
+        }
+        g_deferredPoolAllocateCount = writeIndex;
+        LeaveCriticalSection(&g_deferredPoolAllocateLock);
+    }
+
+    InterlockedExchange(&g_deferredPoolAllocateReplayActive, 0);
+}
+
+extern "C" void __cdecl Bridge_PumpDeferredPoolAllocatesAfterCorePoolInit()
+{
+    PumpDeferredPoolAllocatesOnGameThread(8);
+    PumpDeferredPoolAllocatesOnGameThread(8);
 }
 
 bool EnsureLazyCoreCPoolsReady(const char* reason)
@@ -8418,12 +9167,6 @@ bool EnsureBatchLazyCPoolsInitialised(const char* reason, bool forceRetry)
     const bool allReady = EnsureLazyCoreCPoolsReady(reason ? reason : "batch lazy CPools initialise");
     InterlockedDecrement(&g_lazyCPoolBatchDepth);
 
-    if (allReady) {
-        for (const auto& spec : g_lazyCPoolSpecs) {
-            TriggerDeferredPoolAllocatesForPool(spec.poolPtr);
-        }
-    }
-
     uint32_t ptrSingle = 0;
     uint32_t ptrDouble = 0;
     uint32_t entryInfo = 0;
@@ -8498,47 +9241,41 @@ bool WriteRel32Jump(uintptr_t source, uintptr_t target)
 
 extern "C" bool __cdecl Bridge_CStreaming_IsVeryBusy()
 {
+    PumpDeferredPoolAllocatesOnGameThread(4);
+
+    const uintptr_t chainedTarget = g_chainedStreamingBusyTarget;
+    if (chainedTarget) {
+        __try {
+            return reinterpret_cast<bool(__cdecl*)()>(chainedTarget)();
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) {
+            g_chainedStreamingBusyTarget = 0;
+            Log("streaming busy patch: chained target faulted target=0x%08X code=0x%08X; using bridge fallback",
+                chainedTarget,
+                GetExceptionCode());
+        }
+    }
+
     uint8_t loadingPriority = 0;
     uint32_t requested = 0;
 
     SafeReadU8(kRendererLoadingPriority, &loadingPriority);
     SafeReadU32(kStreamingNumModelsRequested, &requested);
 
-    const uint32_t threshold = static_cast<uint32_t>(g_config.streamingBusyThreshold < 5 ? 5 : g_config.streamingBusyThreshold);
-    if (g_config.enablePedStreamingZoneRepair &&
-        loadingPriority == 0 &&
-        ReadRuntimeU32ForLog(kPopCycleCurrentZoneType) != 0xFFFFFFFFu &&
-        ReadRuntimeU32ForLog(kPopCycleCurrentZoneInfo) != 0 &&
-        ReadRuntimeU32ForLog(kStreamingCurrentZoneType) == 0xFFFFFFFFu &&
-        ReadRuntimeU32ForLog(kStreamingNumPedsLoaded) == 0 &&
-        ReadZoneStreamingCheatMaskForLog() == 0 &&
-        ReadRuntimeByteForLog(kStreamingDisableStreaming) == 0 &&
-        ReadRuntimeByteForLog(kCCutsceneMgrCutsceneProcessing) == 0 &&
-        ReadRuntimeByteForLog(kCReplayMode) != 1 &&
-        ReadRuntimeU32ForLog(kCGameCurrentArea) == 0) {
-        static LONG logCount = 0;
-        const LONG count = InterlockedIncrement(&logCount);
-        if (count <= 16 || (count % 60) == 0) {
-            Log("streaming busy patch: forcing not-busy for empty ped zone count=%ld requested=%u threshold=%u popZone=%u streamZone=%u msPeds=%u",
-                count,
-                requested,
-                threshold,
-                ReadRuntimeU32ForLog(kPopCycleCurrentZoneType),
-                ReadRuntimeU32ForLog(kStreamingCurrentZoneType),
-                ReadRuntimeU32ForLog(kStreamingNumPedsLoaded));
-        }
-        return false;
-    }
-
+    const uint32_t configuredThreshold = static_cast<uint32_t>(g_config.streamingBusyThreshold < 5 ? 5 : g_config.streamingBusyThreshold);
+    const uint32_t threshold = g_config.enableStreamingBusyThresholdPatch ? configuredThreshold : 5u;
     return loadingPriority != 0 || requested > threshold;
 }
 
 void InstallStreamingBusyThresholdPatch()
 {
 #if defined(_M_IX86)
-    if (!g_config.enableStreamingBusyThresholdPatch) {
+    if (!g_config.enableStreamingBusyThresholdPatch && !g_config.enableDeferredPoolAllocateReplay) {
         return;
     }
+
+    const uint32_t configuredThreshold = static_cast<uint32_t>(
+        g_config.streamingBusyThreshold < 5 ? 5 : g_config.streamingBusyThreshold);
 
     uint8_t current[8]{};
     if (!IsReadableCommitted(kCStreamingIsVeryBusy, sizeof(current))) {
@@ -8560,10 +9297,25 @@ void InstallStreamingBusyThresholdPatch()
         std::memcpy(&existingRel, current + 1, sizeof(existingRel));
         const uintptr_t existingTarget = kCStreamingIsVeryBusy + 5 + static_cast<intptr_t>(existingRel);
         if (existingTarget == target) {
-            Log("streaming busy patch: already installed threshold=%d address=0x%08X bridge=0x%08X",
-                g_config.streamingBusyThreshold,
+            Log("streaming busy patch: already installed threshold=%u replayPump=%d address=0x%08X bridge=0x%08X",
+                g_config.enableStreamingBusyThresholdPatch ? configuredThreshold : 5u,
+                g_config.enableDeferredPoolAllocateReplay ? 1 : 0,
                 kCStreamingIsVeryBusy,
                 target);
+        } else if (existingTarget == kHoodlumCStreamingIsVeryBusy && IsExecutableCommitted(existingTarget)) {
+            g_chainedStreamingBusyTarget = existingTarget;
+            if (WriteRel32Jump(kCStreamingIsVeryBusy, target)) {
+                Log("streaming busy patch: chained FLA Hoodlum target=0x%08X thresholdOwner=FLA replayPump=%d address=0x%08X bridge=0x%08X",
+                    existingTarget,
+                    g_config.enableDeferredPoolAllocateReplay ? 1 : 0,
+                    kCStreamingIsVeryBusy,
+                    target);
+            } else {
+                g_chainedStreamingBusyTarget = 0;
+                Log("streaming busy patch: failed to chain FLA Hoodlum target=0x%08X address=0x%08X",
+                    existingTarget,
+                    kCStreamingIsVeryBusy);
+            }
         } else {
             Log("streaming busy patch: existing hook detected at 0x%08X target=0x%08X previous=%02X %02X %02X %02X %02X %02X %02X %02X; skipping to preserve hook chain",
                 kCStreamingIsVeryBusy,
@@ -8575,8 +9327,9 @@ void InstallStreamingBusyThresholdPatch()
     }
 
     if (WriteRel32Jump(kCStreamingIsVeryBusy, target)) {
-        Log("streaming busy patch: installed threshold=%d address=0x%08X bridge=0x%08X previous=%02X %02X %02X %02X %02X %02X %02X %02X",
-            g_config.streamingBusyThreshold,
+        Log("streaming busy patch: installed threshold=%u replayPump=%d address=0x%08X bridge=0x%08X previous=%02X %02X %02X %02X %02X %02X %02X %02X",
+            g_config.enableStreamingBusyThresholdPatch ? configuredThreshold : 5u,
+            g_config.enableDeferredPoolAllocateReplay ? 1 : 0,
             kCStreamingIsVeryBusy,
             target,
             current[0], current[1], current[2], current[3],
@@ -8833,6 +9586,81 @@ uintptr_t CreateRel32Trampoline(uintptr_t source, size_t stolenBytes)
     const int32_t rel = static_cast<int32_t>(diff);
     std::memcpy(gateway + stolenBytes + 1, &rel, sizeof(rel));
     return reinterpret_cast<uintptr_t>(gateway);
+}
+
+void InstallCPoolsInitialiseReplayHook()
+{
+#if defined(_M_IX86)
+    if (!g_config.enableDeferredPoolAllocateReplay) {
+        return;
+    }
+
+    constexpr size_t stolenBytes = 7;
+    static const uint8_t expected[stolenBytes] = {
+        0x6A, 0xFF,                   // push -1
+        0x68, 0x0B, 0xCC, 0x83, 0x00 // push 0x0083CC0B
+    };
+
+    const uintptr_t hookTarget = reinterpret_cast<uintptr_t>(Bridge_CPoolsInitialise_ReplayHook);
+    if (DecodeRel32JumpTarget(kCPoolsInitialise) == hookTarget) {
+        Log("CPools replay hook: already installed entry=0x%08X target=0x%08X trampoline=0x%08X",
+            kCPoolsInitialise,
+            hookTarget,
+            g_cPoolsInitialiseReplayTrampoline);
+        return;
+    }
+
+    uint8_t current[stolenBytes]{};
+    if (!IsReadableCommitted(kCPoolsInitialise, sizeof(current))) {
+        Log("CPools replay hook: entry unreadable address=0x%08X", kCPoolsInitialise);
+        return;
+    }
+    __try {
+        std::memcpy(current, reinterpret_cast<const void*>(kCPoolsInitialise), sizeof(current));
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        Log("CPools replay hook: entry read fault address=0x%08X", kCPoolsInitialise);
+        return;
+    }
+
+    if (std::memcmp(current, expected, sizeof(expected)) != 0) {
+        Log("CPools replay hook: unexpected entry bytes address=0x%08X old=%02X %02X %02X %02X %02X %02X %02X",
+            kCPoolsInitialise,
+            current[0], current[1], current[2], current[3], current[4], current[5], current[6]);
+        return;
+    }
+
+    const uintptr_t trampoline = CreateRel32Trampoline(kCPoolsInitialise, stolenBytes);
+    if (!trampoline) {
+        Log("CPools replay hook: trampoline creation failed address=0x%08X", kCPoolsInitialise);
+        return;
+    }
+
+    uint8_t patch[stolenBytes]{ 0xE9, 0, 0, 0, 0, 0x90, 0x90 };
+    const int64_t diff = static_cast<int64_t>(hookTarget) - static_cast<int64_t>(kCPoolsInitialise + 5);
+    if (diff < INT32_MIN || diff > INT32_MAX) {
+        VirtualFree(reinterpret_cast<void*>(trampoline), 0, MEM_RELEASE);
+        Log("CPools replay hook: target out of rel32 range entry=0x%08X target=0x%08X",
+            kCPoolsInitialise,
+            hookTarget);
+        return;
+    }
+    const int32_t rel = static_cast<int32_t>(diff);
+    std::memcpy(patch + 1, &rel, sizeof(rel));
+
+    g_cPoolsInitialiseReplayTrampoline = trampoline;
+    if (WriteBytesWithProtect(kCPoolsInitialise, patch, sizeof(patch))) {
+        Log("CPools replay hook: installed entry=0x%08X target=0x%08X trampoline=0x%08X stolen=%u",
+            kCPoolsInitialise,
+            hookTarget,
+            trampoline,
+            static_cast<unsigned>(stolenBytes));
+    } else {
+        g_cPoolsInitialiseReplayTrampoline = 0;
+        VirtualFree(reinterpret_cast<void*>(trampoline), 0, MEM_RELEASE);
+        Log("CPools replay hook: patch write failed entry=0x%08X", kCPoolsInitialise);
+    }
+#endif
 }
 
 float AbsFloat(float value)
@@ -9446,7 +10274,7 @@ bool ReadConfiguredSpecialActorName(uint32_t modelId, uint32_t actorCode, char* 
     char key[64]{};
     if (actorCode > 0) {
         sprintf_s(key, "SpecialActorName%03u", actorCode);
-        if (ReadSmallTextValue(kConfigPath, key, out, outSize) && out[0]) {
+        if (ReadSmallTextValue(g_configPath, key, out, outSize) && out[0]) {
             return true;
         }
 
@@ -9466,7 +10294,7 @@ bool ReadConfiguredSpecialActorName(uint32_t modelId, uint32_t actorCode, char* 
     }
 
     sprintf_s(key, "SpecialActor%u", modelId);
-    if (ReadSmallTextValue(kConfigPath, key, out, outSize) && out[0]) {
+    if (ReadSmallTextValue(g_configPath, key, out, outSize) && out[0]) {
         return true;
     }
 
@@ -9725,7 +10553,7 @@ signed char WINAPI Bridge_CleoScriptOpcodeProcessBefore(RunningScriptLite* scrip
     }
 
     const long count = InterlockedIncrement(&g_sanPabloSpecialActorBridgeLogs);
-    if (count <= 96 || result == 0) {
+    if (ShouldLogSanPabloSpecialActorBridge(count, mode, result)) {
         Log("special actor bridge: CLEO before script='%.*s' mode=%d genericOp=%d genericModel=%u genericActorCode=%u result=%d sanpabloLoaded=%d states=[%u,%u,%u,%u,%u] operand=%d var=0x%08X",
             8,
             script->name,
@@ -9822,7 +10650,7 @@ signed char __stdcall Bridge_CleoOpcode0296(RunningScriptLite* script)
     }
 
     const long count = InterlockedIncrement(&g_sanPabloSpecialActorBridgeLogs);
-    if (count <= 96 || result == 0) {
+    if (ShouldLogSanPabloSpecialActorBridge(count, mode, result)) {
         Log("special actor bridge: CLEO 0296 script='%.*s' mode=%d genericOp=%d genericModel=%u genericActorCode=%u result=%d sanpabloLoaded=%d states=[%u,%u,%u,%u,%u] operand=%d var=0x%08X",
             8,
             script->name,
@@ -9937,7 +10765,7 @@ unsigned char __fastcall Bridge_ProcessCommands600To699(RunningScriptLite* scrip
     UpdateScriptCompareFlag(script, result != 0);
 
     const long count = InterlockedIncrement(&g_sanPabloSpecialActorBridgeLogs);
-    if (count <= 64 || result == 0) {
+    if (ShouldLogSanPabloSpecialActorBridge(count, mode, result)) {
         Log("special actor bridge: script='%.*s' mode=%d genericOp=%d genericModel=%u genericActorCode=%u result=%d sanpabloLoaded=%d states=[%u,%u,%u,%u,%u]",
             8,
             script->name,
@@ -10839,7 +11667,7 @@ void RefreshRadarTraceRuntimeState()
 
 bool ReadU32(uintptr_t address, uint32_t* out)
 {
-    if (!out || !IsReadableCommitted(address, sizeof(*out))) {
+    if (!out || !address) {
         return false;
     }
 
@@ -11810,8 +12638,7 @@ extern "C" void __stdcall Bridge_DeferPoolAllocate(uintptr_t poolPtrAddress, uin
     EnterCriticalSection(&g_deferredPoolAllocateLock);
     for (uint32_t i = 0; i < g_deferredPoolAllocateCount; ++i) {
         const DeferredPoolAllocate& item = g_deferredPoolAllocates[i];
-        if (!item.completed &&
-            item.poolPtrAddress == poolPtrAddress &&
+        if (item.poolPtrAddress == poolPtrAddress &&
             item.continueAddress == continueAddress &&
             item.thisPtr == thisPtr) {
             LeaveCriticalSection(&g_deferredPoolAllocateLock);
@@ -11846,81 +12673,6 @@ extern "C" void __stdcall Bridge_DeferPoolAllocate(uintptr_t poolPtrAddress, uin
         }
     }
     LeaveCriticalSection(&g_deferredPoolAllocateLock);
-}
-
-DWORD WINAPI DeferredPoolAllocateReplayThread(void*)
-{
-    for (int attempt = 0; attempt < g_config.deferredPoolAllocateReplayIterations; ++attempt) {
-        Sleep(static_cast<DWORD>(g_config.deferredPoolAllocateReplayIntervalMs));
-
-        uint32_t pedPool = 0;
-        uint32_t vehiclePool = 0;
-        uint32_t objectPool = 0;
-        uint32_t colModelPool = 0;
-        if (!AreCorePoolsReadyForDeferredReplay(&pedPool, &vehiclePool, &objectPool, &colModelPool)) {
-            static LONG waitLogs = 0;
-            const LONG logCount = InterlockedIncrement(&waitLogs);
-            if (logCount <= 12 || (attempt % 50) == 0) {
-                uint32_t colSize = 0;
-                uint32_t colFirstFree = 0xFFFFFFFF;
-                ReadCPoolHeader(colModelPool, &colSize, &colFirstFree);
-                Log("auto pool guard: replay waiting for complete core pools attempt=%d ped=0x%08X vehicle=0x%08X object=0x%08X colModel=0x%08X colSize=%u colFirstFree=%u",
-                    attempt,
-                    pedPool,
-                    vehiclePool,
-                    objectPool,
-                    colModelPool,
-                    colSize,
-                    colFirstFree);
-            }
-            continue;
-        }
-
-        DeferredPoolAllocate toRun[kMaxDeferredPoolAllocates]{};
-        uint32_t runCount = 0;
-
-        EnterCriticalSection(&g_deferredPoolAllocateLock);
-        for (uint32_t i = 0; i < g_deferredPoolAllocateCount && runCount < kMaxDeferredPoolAllocates; ++i) {
-            DeferredPoolAllocate& item = g_deferredPoolAllocates[i];
-            if (item.completed) {
-                continue;
-            }
-
-            uintptr_t pool = 0;
-            if (!SafeReadU32(item.poolPtrAddress, reinterpret_cast<uint32_t*>(&pool)) || !pool) {
-                continue;
-            }
-
-            item.completed = 1;
-            toRun[runCount++] = item;
-        }
-        LeaveCriticalSection(&g_deferredPoolAllocateLock);
-
-        for (uint32_t i = 0; i < runCount; ++i) {
-            uintptr_t pool = 0;
-            if (!SafeReadU32(toRun[i].poolPtrAddress, reinterpret_cast<uint32_t*>(&pool)) || !pool) {
-                continue;
-            }
-
-            __try {
-                Bridge_InvokePoolAllocateContinue(toRun[i].continueAddress, toRun[i].thisPtr, pool);
-                Log("auto pool guard: replayed deferred allocate module=%s pool=0x%08X continue=0x%08X this=0x%08X",
-                    toRun[i].moduleName,
-                    pool,
-                    toRun[i].continueAddress,
-                    toRun[i].thisPtr);
-            }
-            __except (EXCEPTION_EXECUTE_HANDLER) {
-                Log("auto pool guard: replay exception module=%s pool=0x%08X continue=0x%08X this=0x%08X",
-                    toRun[i].moduleName,
-                    pool,
-                    toRun[i].continueAddress,
-                    toRun[i].thisPtr);
-            }
-        }
-    }
-
-    return 0;
 }
 
 // Pattern scanner: search within a module's .text section only.
@@ -11985,7 +12737,7 @@ uintptr_t FindPatternInModuleText(HMODULE module, const uint8_t* pattern, const 
     return 0;
 }
 
-// CRC32 of the entire .text section — used as a compact module-version fingerprint.
+// CRC32 of the entire .text section, used as a compact module-version fingerprint.
 uint32_t CalculateModuleTextHash(HMODULE module)
 {
     uint32_t hash = 0xFFFFFFFFu;
@@ -12051,6 +12803,96 @@ uint32_t CalculateModuleTextHash(HMODULE module)
     }
 #endif
     return hash;
+}
+
+uint32_t CalculateModuleFileTextHash(HMODULE module)
+{
+    if (!module) {
+        return 0;
+    }
+
+    char path[MAX_PATH]{};
+    if (!GetModuleFileNameA(module, path, static_cast<DWORD>(sizeof(path)))) {
+        return 0;
+    }
+
+    HANDLE file = CreateFileA(path, GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) {
+        return 0;
+    }
+
+    LARGE_INTEGER fileSize{};
+    if (!GetFileSizeEx(file, &fileSize) || fileSize.QuadPart <= 0 || fileSize.QuadPart > 64ll * 1024ll * 1024ll) {
+        CloseHandle(file);
+        return 0;
+    }
+
+    const size_t size = static_cast<size_t>(fileSize.QuadPart);
+    uint8_t* bytes = new uint8_t[size];
+    DWORD bytesRead = 0;
+    const bool readOk = ReadFile(file, bytes, static_cast<DWORD>(size), &bytesRead, nullptr) && bytesRead == size;
+    CloseHandle(file);
+    if (!readOk || size < sizeof(IMAGE_DOS_HEADER)) {
+        delete[] bytes;
+        return 0;
+    }
+
+    const IMAGE_DOS_HEADER* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(bytes);
+    const size_t ntOffset = dos->e_lfanew > 0 ? static_cast<size_t>(dos->e_lfanew) : size;
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE || ntOffset > size || size - ntOffset < sizeof(IMAGE_NT_HEADERS)) {
+        delete[] bytes;
+        return 0;
+    }
+
+    const IMAGE_NT_HEADERS* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(bytes + ntOffset);
+    const size_t sectionOffset = ntOffset + sizeof(DWORD) + sizeof(IMAGE_FILE_HEADER) + nt->FileHeader.SizeOfOptionalHeader;
+    const size_t sectionBytes = static_cast<size_t>(nt->FileHeader.NumberOfSections) * sizeof(IMAGE_SECTION_HEADER);
+    if (nt->Signature != IMAGE_NT_SIGNATURE || sectionOffset > size || sectionBytes > size - sectionOffset) {
+        delete[] bytes;
+        return 0;
+    }
+
+    uint32_t crcTable[256]{};
+    for (uint32_t i = 0; i < 256; ++i) {
+        uint32_t c = i;
+        for (int bit = 0; bit < 8; ++bit) {
+            c = (c & 1) ? (0xEDB88320u ^ (c >> 1)) : (c >> 1);
+        }
+        crcTable[i] = c;
+    }
+
+    uint32_t result = 0;
+    const IMAGE_SECTION_HEADER* sections = reinterpret_cast<const IMAGE_SECTION_HEADER*>(bytes + sectionOffset);
+    for (WORD i = 0; i < nt->FileHeader.NumberOfSections; ++i) {
+        const IMAGE_SECTION_HEADER& section = sections[i];
+        if (std::memcmp(section.Name, ".text\0\0\0", 8) != 0) {
+            continue;
+        }
+
+        const size_t virtualSize = section.Misc.VirtualSize;
+        const size_t rawSize = section.SizeOfRawData;
+        const size_t rawOffset = section.PointerToRawData;
+        if (virtualSize == 0 || virtualSize > 64u * 1024u * 1024u ||
+            rawOffset > size || rawSize > size - rawOffset) {
+            break;
+        }
+
+        uint32_t hash = 0xFFFFFFFFu;
+        const size_t fileBackedSize = virtualSize < rawSize ? virtualSize : rawSize;
+        for (size_t j = 0; j < fileBackedSize; ++j) {
+            hash = crcTable[(hash ^ bytes[rawOffset + j]) & 0xFF] ^ (hash >> 8);
+        }
+        for (size_t j = fileBackedSize; j < virtualSize; ++j) {
+            hash = crcTable[hash & 0xFF] ^ (hash >> 8);
+        }
+        result = hash ^ 0xFFFFFFFFu;
+        break;
+    }
+
+    delete[] bytes;
+    return result;
 }
 
 // Known-good CLEO+ versions: text-hash -> {objectOffset, vehicleOffset, pedOffset}
@@ -12146,7 +12988,7 @@ uintptr_t FindAllocateBlocksByPattern(HMODULE module, const char* typeName, uint
             firstMatch = textBase + j;
         } else if (!secondMatch) {
             secondMatch = textBase + j;
-            break; // more than one plausible match — too ambiguous
+            break; // More than one plausible match; too ambiguous.
         }
     }
 
@@ -12571,13 +13413,7 @@ void InstallVehFuncsPoolAllocateGuard()
         return;
     }
 
-    HMODULE vehFuncs = GetModuleHandleA("vehfuncs.asi");
-    if (!vehFuncs) {
-        vehFuncs = GetModuleHandleA("VehFuncs.asi");
-    }
-    if (!vehFuncs) {
-        vehFuncs = FindLoadedModuleBySubstring("vehfuncs");
-    }
+    HMODULE vehFuncs = GetModuleHandleA("VehFuncs.asi");
     if (!vehFuncs) {
         Log("VehFuncs pool allocate guard: vehfuncs module not loaded yet");
         return;
@@ -12604,14 +13440,21 @@ void InstallVehFuncsPoolAllocateGuard()
 
 DWORD WINAPI VehFuncsPoolAllocateGuardInstallThread(void*)
 {
+    int installAttempts = 0;
     for (int attempt = 0; attempt < 300; ++attempt) {
         if (!g_config.enableVehFuncsPoolAllocateGuard || g_vehFuncsVehicleAllocateBlocksContinue) {
             return 0;
         }
 
-        if (FindLoadedModuleBySubstring("vehfuncs")) {
+        if (GetModuleHandleA("VehFuncs.asi")) {
             InstallVehFuncsPoolAllocateGuard();
-            return 0;
+            if (g_vehFuncsVehicleAllocateBlocksContinue) {
+                return 0;
+            }
+            if (++installAttempts >= 5) {
+                Log("VehFuncs pool allocate guard: install failed after %d retries", installAttempts);
+                return 0;
+            }
         }
 
         if (attempt == 0 || attempt == 50 || attempt == 150) {
@@ -12622,6 +13465,29 @@ DWORD WINAPI VehFuncsPoolAllocateGuardInstallThread(void*)
 
     Log("VehFuncs pool allocate guard: module still not loaded after delayed install window");
     return 0;
+}
+
+void StartVehFuncsPoolAllocateGuardInstaller()
+{
+    if (!g_config.enableVehFuncsPoolAllocateGuard || g_vehFuncsVehicleAllocateBlocksContinue) {
+        return;
+    }
+    if (InterlockedCompareExchange(&g_vehFuncsPoolGuardInstallerStarted, 1, 0) != 0) {
+        return;
+    }
+
+    InstallVehFuncsPoolAllocateGuard();
+    if (g_vehFuncsVehicleAllocateBlocksContinue) {
+        return;
+    }
+
+    HANDLE thread = CreateThread(nullptr, 0, VehFuncsPoolAllocateGuardInstallThread, nullptr, 0, nullptr);
+    if (thread) {
+        CloseHandle(thread);
+    } else {
+        InterlockedExchange(&g_vehFuncsPoolGuardInstallerStarted, 0);
+        Log("VehFuncs pool allocate guard: delayed install thread creation failed gle=%lu", GetLastError());
+    }
 }
 
 void InstallAnimUncompressNullGuard()
@@ -12961,6 +13827,141 @@ void InstallAnimFrameUpdateSkinnedGuard()
 #endif
 }
 
+void InstallAnimEmptyUpdateGuard()
+{
+#if defined(_M_IX86)
+    constexpr uintptr_t patchAddress = 0x004D360E;
+    constexpr uintptr_t continueAddress = 0x004D3616;
+    constexpr uintptr_t emptyAddress = 0x004D3715;
+    static const uint8_t expectedBytes[] = {
+        0xC7, 0x44, 0x9C, 0x1C, 0x00, 0x00, 0x00, 0x00
+    };
+
+    uint8_t current[sizeof(expectedBytes)]{};
+    if (!IsReadableCommitted(patchAddress, sizeof(current))) {
+        Log("anim empty update guard: patch address unreadable 0x%08X", patchAddress);
+        return;
+    }
+
+    __try {
+        std::memcpy(current, reinterpret_cast<const void*>(patchAddress), sizeof(current));
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        Log("anim empty update guard: read exception at 0x%08X", patchAddress);
+        return;
+    }
+
+    const uintptr_t guardTarget = reinterpret_cast<uintptr_t>(Bridge_AnimClumpFinalizeNodes_Guard);
+    if (DecodeRel32JumpTarget(patchAddress) == guardTarget) {
+        Log("anim empty update guard: already installed at RpAnimBlendClumpUpdateAnimations");
+        return;
+    }
+
+    if (std::memcmp(current, expectedBytes, sizeof(expectedBytes)) != 0) {
+        Log("anim empty update guard: unexpected bytes at 0x%08X old=%02X %02X %02X %02X %02X %02X %02X %02X",
+            patchAddress,
+            current[0], current[1], current[2], current[3],
+            current[4], current[5], current[6], current[7]);
+        return;
+    }
+
+    g_animClumpFinalizeNodesContinue = continueAddress;
+    g_animClumpFinalizeNodesEmpty = emptyAddress;
+    uint8_t patch[sizeof(expectedBytes)]{};
+    patch[0] = 0xE9;
+    const int32_t rel = static_cast<int32_t>(guardTarget - (patchAddress + 5));
+    std::memcpy(patch + 1, &rel, sizeof(rel));
+    for (size_t i = 5; i < sizeof(patch); ++i) {
+        patch[i] = 0x90;
+    }
+
+    if (WriteBytesWithProtect(patchAddress, patch, sizeof(patch))) {
+        Log("anim empty update guard: installed once-per-clump check target=0x%08X continue=0x%08X empty=0x%08X",
+            guardTarget,
+            g_animClumpFinalizeNodesContinue,
+            g_animClumpFinalizeNodesEmpty);
+    }
+#else
+    Log("anim empty update guard: unsupported architecture");
+#endif
+}
+
+void InstallAnimLifecycleDiagnostics()
+{
+#if defined(_M_IX86)
+    {
+        constexpr uintptr_t patchAddress = 0x004CDFF0;
+        constexpr uintptr_t continueAddress = 0x004CDFF6;
+        static const uint8_t expectedBytes[] = {
+            0x56, 0x8B, 0xF1, 0x8B, 0x4E, 0x04
+        };
+        uint8_t current[sizeof(expectedBytes)]{};
+        __try {
+            std::memcpy(current, reinterpret_cast<const void*>(patchAddress), sizeof(current));
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) {
+            Log("anim lifecycle: DestroyAssociations read exception at 0x%08X", patchAddress);
+            current[0] = 0;
+        }
+
+        const uintptr_t target = reinterpret_cast<uintptr_t>(Bridge_AnimDestroyAssociations_Diagnostic);
+        if (DecodeRel32JumpTarget(patchAddress) == target) {
+            Log("anim lifecycle: DestroyAssociations diagnostic already installed");
+        } else if (std::memcmp(current, expectedBytes, sizeof(expectedBytes)) != 0) {
+            Log("anim lifecycle: DestroyAssociations unexpected bytes at 0x%08X old=%02X %02X %02X %02X %02X %02X",
+                patchAddress,
+                current[0], current[1], current[2], current[3], current[4], current[5]);
+        } else {
+            g_animDestroyAssociationsContinue = continueAddress;
+            uint8_t patch[sizeof(expectedBytes)]{};
+            patch[0] = 0xE9;
+            const int32_t rel = static_cast<int32_t>(target - (patchAddress + 5));
+            std::memcpy(patch + 1, &rel, sizeof(rel));
+            patch[5] = 0x90;
+            if (WriteBytesWithProtect(patchAddress, patch, sizeof(patch))) {
+                Log("anim lifecycle: installed DestroyAssociations diagnostic target=0x%08X continue=0x%08X",
+                    target,
+                    g_animDestroyAssociationsContinue);
+            }
+        }
+    }
+
+    {
+        constexpr uintptr_t patchAddress = 0x004D3F40;
+        constexpr uintptr_t continueAddress = 0x004D3F45;
+        static const uint8_t expectedBytes[] = {
+            0xA1, 0x28, 0xEA, 0xB4, 0x00
+        };
+        uint8_t current[sizeof(expectedBytes)]{};
+        __try {
+            std::memcpy(current, reinterpret_cast<const void*>(patchAddress), sizeof(current));
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) {
+            Log("anim lifecycle: RemoveAnimBlock read exception at 0x%08X", patchAddress);
+            current[0] = 0;
+        }
+
+        const uintptr_t target = reinterpret_cast<uintptr_t>(Bridge_AnimRemoveBlock_Diagnostic);
+        if (DecodeRel32JumpTarget(patchAddress) == target) {
+            Log("anim lifecycle: RemoveAnimBlock diagnostic already installed");
+        } else if (std::memcmp(current, expectedBytes, sizeof(expectedBytes)) != 0) {
+            Log("anim lifecycle: RemoveAnimBlock unexpected bytes at 0x%08X old=%02X %02X %02X %02X %02X",
+                patchAddress,
+                current[0], current[1], current[2], current[3], current[4]);
+        } else {
+            g_animRemoveBlockContinue = continueAddress;
+            if (WriteRel32Jump(patchAddress, target)) {
+                Log("anim lifecycle: installed RemoveAnimBlock diagnostic target=0x%08X continue=0x%08X",
+                    target,
+                    g_animRemoveBlockContinue);
+            }
+        }
+    }
+#else
+    Log("anim lifecycle: unsupported architecture");
+#endif
+}
+
 void InstallGetBoundCentreNullGuard()
 {
 #if defined(_M_IX86)
@@ -13021,12 +14022,14 @@ void InstallGetBoundCentreNullGuard()
 void InstallGetBoundRectColModelGuard()
 {
 #if defined(_M_IX86)
-    constexpr uintptr_t patchAddress = 0x00534120;
-    constexpr uintptr_t continueAddress = 0x00534126;
+    // FLA's 0x534126 patch performs the required extended-ID lookup. Hook the
+    // first collision-model dereference after that lookup so normal entities
+    // pay only a null test instead of a second hash lookup and VirtualQuery set.
+    constexpr uintptr_t patchAddress = kFlaNoCollisionErrorPatch;
+    constexpr uintptr_t continueAddress = 0x0053413A;
     static const uint8_t expectedBytes[] = {
-        0x83, 0xEC, 0x34, // sub esp, 34h
-        0x56,             // push esi
-        0x8B, 0xF1        // mov esi, ecx
+        0x8B, 0x10,                   // mov edx, [eax]
+        0x89, 0x54, 0x24, 0x10        // mov [esp+10h], edx
     };
 
     uint8_t current[sizeof(expectedBytes)]{};
@@ -13587,11 +14590,11 @@ void AddRuntimeRewriteRule(
 void AddBuiltInRuntimeRewriteRules()
 {
     AddRuntimeRewriteRule("CModelInfo::ms_modelInfoPtrs", static_cast<uint32_t>(kOriginalCModelInfoPtrs),
-        RUNTIME_REWRITE_TARGET_MODEL_INFO, 0, true, false, false, 256);
+        RUNTIME_REWRITE_TARGET_MODEL_INFO, 0, true, true, false, 256);
     AddRuntimeRewriteRule("CStreaming::ms_aInfoForModel", static_cast<uint32_t>(kOriginalStreamingInfo),
-        RUNTIME_REWRITE_TARGET_STREAMING_INFO, 0, true, false, false, 256);
+        RUNTIME_REWRITE_TARGET_STREAMING_INFO, 0, true, true, false, 256);
     AddRuntimeRewriteRule("CRadar::ms_RadarTrace", static_cast<uint32_t>(kOriginalRadarTrace),
-        RUNTIME_REWRITE_TARGET_RADAR_TRACE, 0, true, false, false, 512);
+        RUNTIME_REWRITE_TARGET_RADAR_TRACE, 0, true, true, false, 512);
 }
 
 void LoadRuntimeRewriteRules()
@@ -13635,7 +14638,10 @@ void LoadRuntimeRewriteRules()
         sprintf_s(key, "%sAlign4", prefix);
         const bool align4 = ReadBridgeBool(key, true);
         sprintf_s(key, "%sExecutableOnly", prefix);
-        const bool executableOnly = ReadBridgeBool(key, false);
+        const bool requestedExecutableOnly = ReadBridgeBool(key, true);
+        if (!requestedExecutableOnly) {
+            Log("runtime rewrite rule: %s requested data-page scanning; forcing executable-only safety policy", prefix);
+        }
         sprintf_s(key, "%sAuditOnly", prefix);
         const bool auditOnly = ReadBridgeBool(key, false);
         sprintf_s(key, "%sMaxPatchesPerModule", prefix);
@@ -13649,7 +14655,7 @@ void LoadRuntimeRewriteRules()
         ReadBridgeText(key, denylist, sizeof(denylist));
 
         AddRuntimeRewriteRule(name, oldValue, ParseRuntimeRewriteTarget(targetText), staticNewValue,
-            align4, executableOnly, auditOnly, maxPatches, allowlist, denylist);
+            align4, true, auditOnly, maxPatches, allowlist, denylist);
     }
 
     if (!g_runtimeRewriteRuleCount) {
@@ -13742,6 +14748,9 @@ void RewriteOneModuleConstants(const MODULEENTRY32& me, bool logDetails)
         }
 
         const bool regionExecutable = IsExecutableProtect(mbi.Protect);
+        if (!regionExecutable) {
+            continue;
+        }
         uintptr_t scanStart = regionBase < base ? base : regionBase;
         uintptr_t scanEnd = regionEnd > end ? end : regionEnd;
         if (scanEnd <= scanStart || scanEnd - scanStart < sizeof(uint32_t)) {
@@ -13773,26 +14782,8 @@ void RewriteOneModuleConstants(const MODULEENTRY32& me, bool logDetails)
                     continue;
                 }
                 const uintptr_t patchAddress = scanStart + i;
-                if ((rule.align4 && (patchAddress & 3)) ||
-                    (rule.executableOnly && !regionExecutable)) {
+                if (rule.align4 && (patchAddress & 3)) {
                     continue;
-                }
-                if (!regionExecutable && i >= 1) {
-                    uint8_t prevByte = buffer[i - 1];
-                    bool looksLikeOperand =
-                        prevByte == 0xA1 || prevByte == 0xA3 ||
-                        prevByte == 0x68 ||
-                        prevByte == 0x05 || prevByte == 0x0D ||
-                        prevByte == 0x15 || prevByte == 0x1D ||
-                        prevByte == 0x25 || prevByte == 0x2D ||
-                        prevByte == 0x35 || prevByte == 0x3D ||
-                        prevByte == 0xB8 || prevByte == 0xB9 ||
-                        prevByte == 0xBA || prevByte == 0xBB ||
-                        prevByte == 0xBC || prevByte == 0xBD ||
-                        prevByte == 0xBE || prevByte == 0xBF;
-                    if (!looksLikeOperand) {
-                        continue;
-                    }
                 }
                 ++hits;
                 const bool ruleDenied = RuleDeniedForRuntimeRewrite(rule, me.szModule, me.szExePath);
@@ -14131,6 +15122,8 @@ bool SkipReplayMarkEverythingAsNew(CONTEXT* ctx, const char* reason, bool restor
 const char* KnownGameAddressName(uintptr_t eip)
 {
     switch (eip) {
+    case 0x0053147D:
+        return "CControllerConfigManager::AffectPadFromKeyBoard loop advance";
     case kCPtrListSingleAddItemNullWrite:
         return "CPtrListSingleLink::AddItem null PtrNodeSingle allocation";
     case kCPtrListDoubleAddItemNullWrite:
@@ -14214,10 +15207,21 @@ void LogCrashClassification(EXCEPTION_POINTERS* info)
         return;
     }
 
+    const DWORD exceptionCode = info->ExceptionRecord->ExceptionCode;
     const uintptr_t eip = reinterpret_cast<uintptr_t>(info->ExceptionRecord->ExceptionAddress);
+    const bool hasAccessType =
+        (exceptionCode == EXCEPTION_ACCESS_VIOLATION || exceptionCode == EXCEPTION_IN_PAGE_ERROR) &&
+        info->ExceptionRecord->NumberParameters > 0;
+    const uintptr_t accessType = hasAccessType
+        ? static_cast<uintptr_t>(info->ExceptionRecord->ExceptionInformation[0])
+        : 0;
     const uintptr_t fault = info->ExceptionRecord->NumberParameters > 1
         ? static_cast<uintptr_t>(info->ExceptionRecord->ExceptionInformation[1])
         : 0;
+    const char* accessName = !hasAccessType ? "n/a" :
+        accessType == 0 ? "read" :
+        accessType == 1 ? "write" :
+        accessType == 8 ? "execute" : "other";
 
     char moduleName[MAX_PATH]{};
     const uintptr_t moduleBase = ModuleBaseFromAddress(eip, moduleName, sizeof(moduleName));
@@ -14278,6 +15282,8 @@ void LogCrashClassification(EXCEPTION_POINTERS* info)
         category = "RW_CLUMP_ATOMICS_NULL_OR_BAD_CLUMP";
     } else if (eip == 0x0054F3B3) {
         category = "PLACEABLE_MATRIX_LIFETIME";
+    } else if (eip >= 0x00531140 && eip <= 0x0053149E) {
+        category = "CONTROLLER_KEYBOARD_STATE_OR_RUNTIME_PATCH";
     } else if (eip == kRpAnimBlendAllocateDataWrite ||
         eip == kRpAnimBlendClumpFillFrameArray ||
         eip == kRpAnimBlendClumpFillFrameArrayRead ||
@@ -14294,8 +15300,11 @@ void LogCrashClassification(EXCEPTION_POINTERS* info)
         category = "NULL_OR_LOW_POINTER";
     }
 
-    Log("crash-class: category=%s eip=0x%08X module=%s+0x%X known='%s' fault=0x%08X lowFault=%d staleExec=%d eipState=%s eipProtect=%s stackUrbanize=%d stackFLA=%d stackCLEO=%d stackScriptOpcode=%d",
+    Log("crash-class: category=%s code=0x%08X access=%s(%u) eip=0x%08X module=%s+0x%X known='%s' fault=0x%08X lowFault=%d staleExec=%d eipState=%s eipProtect=%s stackUrbanize=%d stackFLA=%d stackCLEO=%d stackScriptOpcode=%d",
         category,
+        exceptionCode,
+        accessName,
+        static_cast<unsigned>(accessType),
         eip,
         moduleName,
         moduleBase ? eip - moduleBase : 0,
@@ -14309,6 +15318,30 @@ void LogCrashClassification(EXCEPTION_POINTERS* info)
         stackFla ? 1 : 0,
         stackCleo ? 1 : 0,
         stackScriptOpcode ? 1 : 0);
+
+#if defined(_M_IX86)
+    if (ctx) {
+        Log("crash-context: eax=0x%08X ebx=0x%08X ecx=0x%08X edx=0x%08X esi=0x%08X edi=0x%08X ebp=0x%08X esp=0x%08X eip=0x%08X eflags=0x%08X",
+            ctx->Eax,
+            ctx->Ebx,
+            ctx->Ecx,
+            ctx->Edx,
+            ctx->Esi,
+            ctx->Edi,
+            ctx->Ebp,
+            ctx->Esp,
+            ctx->Eip,
+            ctx->EFlags);
+    }
+
+    if (exceptionCode == EXCEPTION_ACCESS_VIOLATION &&
+        ContainsCaseInsensitive(moduleName, "gta_sa")) {
+        LogBytes("crash-eip", eip, 16);
+        if (esp) {
+            LogDwords("crash-stack", esp, 16);
+        }
+    }
+#endif
 }
 
 #if defined(_M_IX86)
@@ -15189,12 +16222,9 @@ LONG CALLBACK BridgeVectoredExceptionHandler(EXCEPTION_POINTERS* info)
         info->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION &&
         info->ExceptionRecord->ExceptionAddress == reinterpret_cast<void*>(0x00554F62) &&
         info->ExceptionRecord->NumberParameters > 1 &&
-        static_cast<uintptr_t>(info->ExceptionRecord->ExceptionInformation[1]) < 0x10000) {
+        info->ExceptionRecord->ExceptionInformation[0] == 0) {
 
         CONTEXT* ctx = info->ContextRecord;
-        __asm {
-            fstp st(0)
-        }
         Bridge_LogInvalidShouldModelBeStreamedColModel(ctx->Esi, ctx->Edi, ctx->Eax, ctx->Esp);
         ctx->Eip = 0x00554F76;
         return EXCEPTION_CONTINUE_EXECUTION;
@@ -15207,7 +16237,7 @@ LONG CALLBACK BridgeVectoredExceptionHandler(EXCEPTION_POINTERS* info)
         info->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION &&
         info->ExceptionRecord->ExceptionAddress == reinterpret_cast<void*>(kRpAnimBlendAllocateDataWrite) &&
         info->ExceptionRecord->NumberParameters > 1 &&
-        static_cast<uintptr_t>(info->ExceptionRecord->ExceptionInformation[1]) < 0x10000) {
+        info->ExceptionRecord->ExceptionInformation[0] == 1) {
 
         CONTEXT* ctx = info->ContextRecord;
         static LONG recoverCount = 0;
@@ -15228,7 +16258,7 @@ LONG CALLBACK BridgeVectoredExceptionHandler(EXCEPTION_POINTERS* info)
         return EXCEPTION_CONTINUE_EXECUTION;
     }
 
-    if (g_config.enableAnimFrameUpdateGuard &&
+    if ((g_config.enableAnimFrameUpdateGuard || g_config.enableAnimEmptyUpdateGuard) &&
         info->ContextRecord &&
         info->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION &&
         info->ExceptionRecord->ExceptionAddress == reinterpret_cast<void*>(0x004D1710) &&
@@ -15398,132 +16428,1579 @@ LONG CALLBACK BridgeVectoredExceptionHandler(EXCEPTION_POINTERS* info)
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
+constexpr uint32_t kSupportedProperShadersTextHash = 0x4E3711C9;
+
+bool IsSupportedProperShadersTextHash(uint32_t hash)
+{
+    return hash == kSupportedProperShadersTextHash;
+}
+
+bool IsProperShadersAddTxdSlotThunk(HMODULE psAsi, uintptr_t target)
+{
+    if (!psAsi || !target || !IsReadableCommitted(target, 11)) {
+        return false;
+    }
+
+    char targetModule[MAX_PATH]{};
+    if (ModuleBaseFromAddress(target, targetModule, sizeof(targetModule)) != reinterpret_cast<uintptr_t>(psAsi)) {
+        return false;
+    }
+
+    uint8_t bytes[11]{};
+    __try {
+        std::memcpy(bytes, reinterpret_cast<const void*>(target), sizeof(bytes));
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+
+    if (bytes[0] != 0xA3 || bytes[5] != 0xE8 || bytes[10] != 0xC3) {
+        return false;
+    }
+
+    uint32_t txdSlotStorage = 0;
+    std::memcpy(&txdSlotStorage, bytes + 1, sizeof(txdSlotStorage));
+    const uintptr_t callback = DecodeRel32JumpTarget(target + 5);
+    char callbackModule[MAX_PATH]{};
+    return IsWritableCommitted(txdSlotStorage, sizeof(uint32_t)) &&
+        ModuleBaseFromAddress(callback, callbackModule, sizeof(callbackModule)) == reinterpret_cast<uintptr_t>(psAsi) &&
+        IsExecutableCommitted(callback);
+}
+
+uintptr_t FindFlaAddTxdSlotThunk()
+{
+    HMODULE fla = FindFlaModule();
+    if (!fla) {
+        return 0;
+    }
+
+    static const uint8_t pattern[] = {
+        0x03, 0xC2, 0x50, 0x50, 0xE8, 0, 0, 0, 0,
+        0x83, 0xC4, 0x04, 0x58, 0x5E, 0xC3
+    };
+    const uintptr_t thunk = FindPatternInModuleText(fla, pattern, "xxxxx????xxxxxx", sizeof(pattern));
+    if (!thunk) {
+        return 0;
+    }
+
+    const uintptr_t callback = DecodeRel32JumpTarget(thunk + 4);
+    char callbackModule[MAX_PATH]{};
+    if (ModuleBaseFromAddress(callback, callbackModule, sizeof(callbackModule)) != reinterpret_cast<uintptr_t>(fla) ||
+        !IsExecutableCommitted(callback)) {
+        return 0;
+    }
+    return thunk;
+}
+
+constexpr uintptr_t kRwD3D9SetRenderState = 0x007FC2D0;
+constexpr uintptr_t kRwD3D9GetRenderState = 0x007FC320;
+constexpr uintptr_t kRwD3D9DevicePointer = 0x00C97C28;
+constexpr size_t kD3D9SetRenderStateVtableIndex = 57;
+constexpr size_t kD3D9GetRenderStateVtableIndex = 58;
+constexpr uint32_t kProperShadersAlphaRenderStates[] = {
+    15,  // D3DRS_ALPHATESTENABLE
+    19,  // D3DRS_SRCBLEND
+    20,  // D3DRS_DESTBLEND
+    24,  // D3DRS_ALPHAREF
+    25,  // D3DRS_ALPHAFUNC
+    27,  // D3DRS_ALPHABLENDENABLE
+    171, // D3DRS_BLENDOP
+    206, // D3DRS_SEPARATEALPHABLENDENABLE
+    207, // D3DRS_SRCBLENDALPHA
+    208, // D3DRS_DESTBLENDALPHA
+    209, // D3DRS_BLENDOPALPHA
+};
+constexpr size_t kProperShadersAlphaRenderStateCount =
+    sizeof(kProperShadersAlphaRenderStates) / sizeof(kProperShadersAlphaRenderStates[0]);
+
+using D3D9SetRenderStateFn = LONG(__stdcall*)(void*, uint32_t, uint32_t);
+using D3D9GetRenderStateFn = LONG(__stdcall*)(void*, uint32_t, uint32_t*);
+
+struct D3D9RenderStateApi {
+    void* device = nullptr;
+    D3D9SetRenderStateFn setRenderState = nullptr;
+    D3D9GetRenderStateFn getRenderState = nullptr;
+};
+
+struct ProperShadersNamedD3D9State {
+    uint32_t state = 0;
+    const char* name = nullptr;
+};
+
+constexpr ProperShadersNamedD3D9State kProperShadersTraceRenderStates[] = {
+    {7, "zEnable"},
+    {14, "zWrite"},
+    {15, "alphaTest"},
+    {19, "srcBlend"},
+    {20, "destBlend"},
+    {22, "cull"},
+    {23, "zFunc"},
+    {24, "alphaRef"},
+    {25, "alphaFunc"},
+    {27, "alphaBlend"},
+    {28, "fog"},
+    {52, "stencil"},
+    {152, "clipPlanes"},
+    {168, "colorWrite"},
+    {171, "blendOp"},
+    {175, "slopeDepthBias"},
+    {195, "depthBias"},
+    {206, "separateAlpha"},
+    {207, "srcBlendAlpha"},
+    {208, "destBlendAlpha"},
+    {209, "blendOpAlpha"},
+};
+constexpr size_t kProperShadersTraceRenderStateCount =
+    sizeof(kProperShadersTraceRenderStates) / sizeof(kProperShadersTraceRenderStates[0]);
+
+constexpr ProperShadersNamedD3D9State kProperShadersTraceTextureStageStates[] = {
+    {1, "colorOp"},
+    {2, "colorArg1"},
+    {3, "colorArg2"},
+    {4, "alphaOp"},
+    {5, "alphaArg1"},
+    {6, "alphaArg2"},
+    {11, "texCoordIndex"},
+    {24, "texTransform"},
+};
+constexpr size_t kProperShadersTraceTextureStageStateCount =
+    sizeof(kProperShadersTraceTextureStageStates) /
+    sizeof(kProperShadersTraceTextureStageStates[0]);
+
+constexpr ProperShadersNamedD3D9State kProperShadersTraceSamplerStates[] = {
+    {1, "addressU"},
+    {2, "addressV"},
+    {5, "magFilter"},
+    {6, "minFilter"},
+    {7, "mipFilter"},
+    {8, "mipLodBias"},
+    {9, "maxMipLevel"},
+    {10, "maxAniso"},
+};
+constexpr size_t kProperShadersTraceSamplerStateCount =
+    sizeof(kProperShadersTraceSamplerStates) / sizeof(kProperShadersTraceSamplerStates[0]);
+
+constexpr const char* kProperShadersAlphaRenderStateNames[] = {
+    "alphaTest", "srcBlend", "destBlend", "alphaRef", "alphaFunc", "alphaBlend",
+    "blendOp", "separateAlpha", "srcBlendAlpha", "destBlendAlpha", "blendOpAlpha",
+};
+
+struct ProperShadersMainSceneBaseline {
+    bool valid = false;
+    bool stencilValid = false;
+    uint32_t threadId = 0;
+    uint32_t alphaTest = 0;
+    uint32_t alphaRef = 0;
+    uint32_t alphaFunc = 0;
+    uint32_t stencilEnable = 0;
+};
+
+constexpr size_t kProperShadersMainSceneBaselineCapacity = 8;
+ProperShadersMainSceneBaseline
+    g_properShadersMainSceneBaselines[kProperShadersMainSceneBaselineCapacity]{};
+LONG g_properShadersMainSceneBaselineDepth = 0;
+
+struct ProperShadersD3D9Viewport {
+    uint32_t x = 0;
+    uint32_t y = 0;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    float minZ = 0.0f;
+    float maxZ = 0.0f;
+};
+
+using D3D9GetRenderTargetFn = LONG(__stdcall*)(void*, uint32_t, void**);
+using D3D9GetDepthStencilSurfaceFn = LONG(__stdcall*)(void*, void**);
+using D3D9GetViewportFn = LONG(__stdcall*)(void*, ProperShadersD3D9Viewport*);
+using D3D9GetTextureFn = LONG(__stdcall*)(void*, uint32_t, void**);
+using D3D9GetTextureStageStateFn = LONG(__stdcall*)(void*, uint32_t, uint32_t, uint32_t*);
+using D3D9GetSamplerStateFn = LONG(__stdcall*)(void*, uint32_t, uint32_t, uint32_t*);
+using D3D9GetVertexShaderFn = LONG(__stdcall*)(void*, void**);
+using D3D9GetPixelShaderFn = LONG(__stdcall*)(void*, void**);
+using D3D9ReleaseFn = ULONG(__stdcall*)(void*);
+
+struct D3D9StateTraceApi {
+    void* device = nullptr;
+    D3D9GetRenderStateFn getRenderState = nullptr;
+    D3D9GetRenderTargetFn getRenderTarget = nullptr;
+    D3D9GetDepthStencilSurfaceFn getDepthStencilSurface = nullptr;
+    D3D9GetViewportFn getViewport = nullptr;
+    D3D9GetTextureFn getTexture = nullptr;
+    D3D9GetTextureStageStateFn getTextureStageState = nullptr;
+    D3D9GetSamplerStateFn getSamplerState = nullptr;
+    D3D9GetVertexShaderFn getVertexShader = nullptr;
+    D3D9GetPixelShaderFn getPixelShader = nullptr;
+};
+
+struct ProperShadersD3D9StateSnapshot {
+    uint32_t validMask = 0;
+    void* device = nullptr;
+    uint32_t renderStates[kProperShadersTraceRenderStateCount]{};
+    uint32_t textureStageStates[kProperShadersTraceTextureStageStateCount]{};
+    uint32_t samplerStates[kProperShadersTraceSamplerStateCount]{};
+    void* texture0 = nullptr;
+    void* vertexShader = nullptr;
+    void* pixelShader = nullptr;
+    void* renderTarget0 = nullptr;
+    void* depthStencil = nullptr;
+    ProperShadersD3D9Viewport viewport{};
+    uint32_t phaseAlternate = UINT32_MAX;
+    uint32_t phaseByte9 = UINT32_MAX;
+    uint32_t phaseByte10 = UINT32_MAX;
+};
+
+enum ProperShadersStateTraceKind : uint32_t {
+    kProperShadersStateTraceRenderScene = 1,
+    kProperShadersStateTraceFadingEntities = 2,
+};
+
+struct ProperShadersStateTraceRecord {
+    uint32_t sequence = 0;
+    uint32_t kind = 0;
+    uint32_t threadId = 0;
+    uint32_t snapshotCount = 0;
+    uint64_t beginTick = 0;
+    uint64_t endTick = 0;
+    uint32_t rwValidMask = 0;
+    uint32_t flags = 0;
+    uint32_t deviceChangedMask = 0;
+    uint32_t rwStates[3][kProperShadersAlphaRenderStateCount]{};
+    ProperShadersD3D9StateSnapshot snapshots[3]{};
+};
+
+constexpr size_t kProperShadersStateTraceCapacity = 2048;
+constexpr size_t kProperShadersStateTraceBytes =
+    kProperShadersStateTraceCapacity * sizeof(ProperShadersStateTraceRecord);
+SRWLOCK g_properShadersStateTraceLock = SRWLOCK_INIT;
+ProperShadersStateTraceRecord* g_properShadersStateTraceRing = nullptr;
+uint32_t g_properShadersStateTraceSequence = 0;
+LONG g_properShadersStateTraceCaptureId = 0;
+LONG g_properShadersStateTraceTriggerDown = 0;
+
+bool ResolveD3D9RenderStateApi(D3D9RenderStateApi* api)
+{
+    if (!api || !IsReadableCommitted(kRwD3D9DevicePointer, sizeof(uintptr_t))) {
+        return false;
+    }
+
+    __try {
+        void* device = *reinterpret_cast<void* const*>(kRwD3D9DevicePointer);
+        if (!device || !IsReadableCommitted(reinterpret_cast<uintptr_t>(device), sizeof(uintptr_t))) {
+            return false;
+        }
+
+        void** vtable = *reinterpret_cast<void***>(device);
+        const size_t requiredVtableSize = (kD3D9GetRenderStateVtableIndex + 1) * sizeof(void*);
+        if (!vtable || !IsReadableCommitted(reinterpret_cast<uintptr_t>(vtable), requiredVtableSize)) {
+            return false;
+        }
+
+        auto setRenderState = reinterpret_cast<D3D9SetRenderStateFn>(
+            vtable[kD3D9SetRenderStateVtableIndex]);
+        auto getRenderState = reinterpret_cast<D3D9GetRenderStateFn>(
+            vtable[kD3D9GetRenderStateVtableIndex]);
+        if (!setRenderState || !getRenderState ||
+            !IsExecutableCommitted(reinterpret_cast<uintptr_t>(setRenderState)) ||
+            !IsExecutableCommitted(reinterpret_cast<uintptr_t>(getRenderState))) {
+            return false;
+        }
+
+        api->device = device;
+        api->setRenderState = setRenderState;
+        api->getRenderState = getRenderState;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    return true;
+}
+
+bool ReadD3D9DeviceRenderState(uint32_t state, uint32_t* value)
+{
+    if (!value) {
+        return false;
+    }
+
+    D3D9RenderStateApi api{};
+    if (!ResolveD3D9RenderStateApi(&api)) {
+        return false;
+    }
+
+    __try {
+        return api.getRenderState(api.device, state, value) >= 0;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+bool SynchronizeD3D9DeviceRenderState(
+    uint32_t state,
+    uint32_t desired,
+    uint32_t* actualBefore,
+    bool* changed)
+{
+    D3D9RenderStateApi api{};
+    if (!ResolveD3D9RenderStateApi(&api)) {
+        return false;
+    }
+
+    __try {
+        uint32_t actual = 0;
+        if (api.getRenderState(api.device, state, &actual) < 0) {
+            return false;
+        }
+        if (actualBefore) {
+            *actualBefore = actual;
+        }
+        const bool needsChange = actual != desired;
+        if (needsChange && api.setRenderState(api.device, state, desired) < 0) {
+            return false;
+        }
+        if (changed) {
+            *changed = needsChange;
+        }
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+bool ResolveD3D9StateTraceApi(D3D9StateTraceApi* api)
+{
+    if (!api) {
+        return false;
+    }
+
+    D3D9RenderStateApi renderStateApi{};
+    if (!ResolveD3D9RenderStateApi(&renderStateApi)) {
+        return false;
+    }
+
+    __try {
+        void** vtable = *reinterpret_cast<void***>(renderStateApi.device);
+        constexpr size_t kRequiredVtableEntries = 112;
+        if (!vtable || !IsReadableCommitted(
+                reinterpret_cast<uintptr_t>(vtable),
+                kRequiredVtableEntries * sizeof(void*))) {
+            return false;
+        }
+
+        api->device = renderStateApi.device;
+        api->getRenderState = renderStateApi.getRenderState;
+        api->getRenderTarget = reinterpret_cast<D3D9GetRenderTargetFn>(vtable[38]);
+        api->getDepthStencilSurface =
+            reinterpret_cast<D3D9GetDepthStencilSurfaceFn>(vtable[40]);
+        api->getViewport = reinterpret_cast<D3D9GetViewportFn>(vtable[48]);
+        api->getTexture = reinterpret_cast<D3D9GetTextureFn>(vtable[64]);
+        api->getTextureStageState =
+            reinterpret_cast<D3D9GetTextureStageStateFn>(vtable[66]);
+        api->getSamplerState = reinterpret_cast<D3D9GetSamplerStateFn>(vtable[68]);
+        api->getVertexShader = reinterpret_cast<D3D9GetVertexShaderFn>(vtable[94]);
+        api->getPixelShader = reinterpret_cast<D3D9GetPixelShaderFn>(vtable[111]);
+
+        const uintptr_t functions[] = {
+            reinterpret_cast<uintptr_t>(api->getRenderTarget),
+            reinterpret_cast<uintptr_t>(api->getDepthStencilSurface),
+            reinterpret_cast<uintptr_t>(api->getViewport),
+            reinterpret_cast<uintptr_t>(api->getTexture),
+            reinterpret_cast<uintptr_t>(api->getTextureStageState),
+            reinterpret_cast<uintptr_t>(api->getSamplerState),
+            reinterpret_cast<uintptr_t>(api->getVertexShader),
+            reinterpret_cast<uintptr_t>(api->getPixelShader),
+        };
+        for (uintptr_t function : functions) {
+            if (!function || !IsExecutableCommitted(function)) {
+                return false;
+            }
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    return true;
+}
+
+void ReleaseD3D9StateTraceObject(void* object)
+{
+    if (!object || !IsReadableCommitted(reinterpret_cast<uintptr_t>(object), sizeof(void*))) {
+        return;
+    }
+
+    __try {
+        void** vtable = *reinterpret_cast<void***>(object);
+        if (!vtable || !IsReadableCommitted(reinterpret_cast<uintptr_t>(vtable), 3 * sizeof(void*))) {
+            return;
+        }
+        auto release = reinterpret_cast<D3D9ReleaseFn>(vtable[2]);
+        if (release && IsExecutableCommitted(reinterpret_cast<uintptr_t>(release))) {
+            release(object);
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+}
+
+void CaptureProperShadersPhaseState(ProperShadersD3D9StateSnapshot* snapshot)
+{
+    if (!snapshot) {
+        return;
+    }
+
+    HMODULE properShaders = GetModuleHandleA("ProperShaders.asi");
+    if (!properShaders) {
+        properShaders = GetModuleHandleA("propershaders.asi");
+    }
+    if (!properShaders) {
+        return;
+    }
+
+    const uintptr_t phaseAddress =
+        reinterpret_cast<uintptr_t>(properShaders) + 0x153CE4;
+    if (!IsReadableCommitted(phaseAddress, 11)) {
+        return;
+    }
+
+    __try {
+        uint8_t phaseBytes[11]{};
+        std::memcpy(phaseBytes, reinterpret_cast<const void*>(phaseAddress), sizeof(phaseBytes));
+        std::memcpy(&snapshot->phaseAlternate, phaseBytes, sizeof(snapshot->phaseAlternate));
+        snapshot->phaseByte9 = phaseBytes[9];
+        snapshot->phaseByte10 = phaseBytes[10];
+        snapshot->validMask |= 0x00000002;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+}
+
+bool CaptureProperShadersD3D9StateSnapshot(ProperShadersD3D9StateSnapshot* snapshot)
+{
+    if (!snapshot) {
+        return false;
+    }
+
+    *snapshot = ProperShadersD3D9StateSnapshot{};
+    for (size_t i = 0; i < kProperShadersTraceRenderStateCount; ++i) {
+        snapshot->renderStates[i] = UINT32_MAX;
+    }
+    for (size_t i = 0; i < kProperShadersTraceTextureStageStateCount; ++i) {
+        snapshot->textureStageStates[i] = UINT32_MAX;
+    }
+    for (size_t i = 0; i < kProperShadersTraceSamplerStateCount; ++i) {
+        snapshot->samplerStates[i] = UINT32_MAX;
+    }
+    CaptureProperShadersPhaseState(snapshot);
+
+    D3D9StateTraceApi api{};
+    if (!ResolveD3D9StateTraceApi(&api)) {
+        return false;
+    }
+
+    snapshot->device = api.device;
+    snapshot->validMask |= 0x00000001;
+    __try {
+        for (size_t i = 0; i < kProperShadersTraceRenderStateCount; ++i) {
+            uint32_t value = UINT32_MAX;
+            if (api.getRenderState(
+                    api.device,
+                    kProperShadersTraceRenderStates[i].state,
+                    &value) >= 0) {
+                snapshot->renderStates[i] = value;
+            }
+        }
+        for (size_t i = 0; i < kProperShadersTraceTextureStageStateCount; ++i) {
+            uint32_t value = UINT32_MAX;
+            if (api.getTextureStageState(
+                    api.device,
+                    0,
+                    kProperShadersTraceTextureStageStates[i].state,
+                    &value) >= 0) {
+                snapshot->textureStageStates[i] = value;
+            }
+        }
+        for (size_t i = 0; i < kProperShadersTraceSamplerStateCount; ++i) {
+            uint32_t value = UINT32_MAX;
+            if (api.getSamplerState(
+                    api.device,
+                    0,
+                    kProperShadersTraceSamplerStates[i].state,
+                    &value) >= 0) {
+                snapshot->samplerStates[i] = value;
+            }
+        }
+
+        void* object = nullptr;
+        if (api.getTexture(api.device, 0, &object) >= 0) {
+            snapshot->texture0 = object;
+            snapshot->validMask |= 0x00000004;
+            ReleaseD3D9StateTraceObject(object);
+        }
+        object = nullptr;
+        if (api.getVertexShader(api.device, &object) >= 0) {
+            snapshot->vertexShader = object;
+            snapshot->validMask |= 0x00000008;
+            ReleaseD3D9StateTraceObject(object);
+        }
+        object = nullptr;
+        if (api.getPixelShader(api.device, &object) >= 0) {
+            snapshot->pixelShader = object;
+            snapshot->validMask |= 0x00000010;
+            ReleaseD3D9StateTraceObject(object);
+        }
+        object = nullptr;
+        if (api.getRenderTarget(api.device, 0, &object) >= 0) {
+            snapshot->renderTarget0 = object;
+            snapshot->validMask |= 0x00000020;
+            ReleaseD3D9StateTraceObject(object);
+        }
+        object = nullptr;
+        if (api.getDepthStencilSurface(api.device, &object) >= 0) {
+            snapshot->depthStencil = object;
+            snapshot->validMask |= 0x00000040;
+            ReleaseD3D9StateTraceObject(object);
+        }
+        if (api.getViewport(api.device, &snapshot->viewport) >= 0) {
+            snapshot->validMask |= 0x00000080;
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    return true;
+}
+
+const char* ProperShadersStateTraceKindName(uint32_t kind)
+{
+    switch (kind) {
+    case kProperShadersStateTraceRenderScene:
+        return "RenderScene";
+    case kProperShadersStateTraceFadingEntities:
+        return "FadingEntities";
+    default:
+        return "Unknown";
+    }
+}
+
+void WriteProperShadersD3D9StateSnapshot(
+    FILE* file,
+    uint32_t index,
+    const ProperShadersD3D9StateSnapshot& snapshot)
+{
+    if (!file) {
+        return;
+    }
+
+    std::fprintf(file,
+        " snapshot=%u valid=0x%08X device=%p tex0=%p vs=%p ps=%p rt0=%p ds=%p "
+        "viewport=%u,%u,%u,%u,%.6f,%.6f phaseAlt=%u phase9=%u phase10=%u\n",
+        index,
+        snapshot.validMask,
+        snapshot.device,
+        snapshot.texture0,
+        snapshot.vertexShader,
+        snapshot.pixelShader,
+        snapshot.renderTarget0,
+        snapshot.depthStencil,
+        snapshot.viewport.x,
+        snapshot.viewport.y,
+        snapshot.viewport.width,
+        snapshot.viewport.height,
+        snapshot.viewport.minZ,
+        snapshot.viewport.maxZ,
+        snapshot.phaseAlternate,
+        snapshot.phaseByte9,
+        snapshot.phaseByte10);
+
+    std::fprintf(file, "  rs");
+    for (size_t i = 0; i < kProperShadersTraceRenderStateCount; ++i) {
+        std::fprintf(file, " %s=%u(0x%08X)",
+            kProperShadersTraceRenderStates[i].name,
+            snapshot.renderStates[i],
+            snapshot.renderStates[i]);
+    }
+    std::fputc('\n', file);
+
+    std::fprintf(file, "  tss0");
+    for (size_t i = 0; i < kProperShadersTraceTextureStageStateCount; ++i) {
+        std::fprintf(file, " %s=%u(0x%08X)",
+            kProperShadersTraceTextureStageStates[i].name,
+            snapshot.textureStageStates[i],
+            snapshot.textureStageStates[i]);
+    }
+    std::fputc('\n', file);
+
+    std::fprintf(file, "  sampler0");
+    for (size_t i = 0; i < kProperShadersTraceSamplerStateCount; ++i) {
+        std::fprintf(file, " %s=%u(0x%08X)",
+            kProperShadersTraceSamplerStates[i].name,
+            snapshot.samplerStates[i],
+            snapshot.samplerStates[i]);
+    }
+    std::fputc('\n', file);
+}
+
+void DumpProperShadersStateTraceRing()
+{
+    auto* records = static_cast<ProperShadersStateTraceRecord*>(VirtualAlloc(
+        nullptr,
+        kProperShadersStateTraceBytes,
+        MEM_RESERVE | MEM_COMMIT,
+        PAGE_READWRITE));
+    if (!records) {
+        Log("proper shaders state ring: dump allocation failed bytes=%u gle=%lu",
+            static_cast<unsigned>(kProperShadersStateTraceBytes),
+            GetLastError());
+        return;
+    }
+
+    uint32_t copied = 0;
+    uint32_t newestSequence = 0;
+    AcquireSRWLockShared(&g_properShadersStateTraceLock);
+    newestSequence = g_properShadersStateTraceSequence;
+    const uint32_t available = g_properShadersStateTraceRing
+        ? (newestSequence < kProperShadersStateTraceCapacity
+            ? newestSequence
+            : static_cast<uint32_t>(kProperShadersStateTraceCapacity))
+        : 0;
+    const uint32_t oldestSequence = available ? newestSequence - available + 1 : 0;
+    for (uint32_t sequence = oldestSequence; sequence && sequence <= newestSequence; ++sequence) {
+        const ProperShadersStateTraceRecord& record =
+            g_properShadersStateTraceRing[(sequence - 1) % kProperShadersStateTraceCapacity];
+        if (record.sequence == sequence) {
+            records[copied++] = record;
+        }
+    }
+    ReleaseSRWLockShared(&g_properShadersStateTraceLock);
+
+    FILE* file = nullptr;
+    if (fopen_s(&file, g_properShadersStateTracePath, "a") != 0 || !file) {
+        Log("proper shaders state ring: failed to open path=%s", g_properShadersStateTracePath);
+        VirtualFree(records, 0, MEM_RELEASE);
+        return;
+    }
+
+    SYSTEMTIME st{};
+    GetLocalTime(&st);
+    const LONG captureId = InterlockedIncrement(&g_properShadersStateTraceCaptureId);
+    std::fprintf(file,
+        "# capture=%ld begin=%04u-%02u-%02uT%02u:%02u:%02u.%03u records=%u newest=%u capacity=%u triggerVK=%d\n",
+        captureId,
+        st.wYear,
+        st.wMonth,
+        st.wDay,
+        st.wHour,
+        st.wMinute,
+        st.wSecond,
+        st.wMilliseconds,
+        copied,
+        newestSequence,
+        static_cast<unsigned>(kProperShadersStateTraceCapacity),
+        g_config.properShadersStateRingTriggerVirtualKey);
+
+    for (uint32_t i = 0; i < copied; ++i) {
+        const ProperShadersStateTraceRecord& record = records[i];
+        std::fprintf(file,
+            "record seq=%u kind=%s thread=%u beginTick=%llu endTick=%llu durationMs=%llu snapshots=%u rwMask=0x%X flags=0x%X deviceMask=0x%X\n",
+            record.sequence,
+            ProperShadersStateTraceKindName(record.kind),
+            record.threadId,
+            static_cast<unsigned long long>(record.beginTick),
+            static_cast<unsigned long long>(record.endTick),
+            static_cast<unsigned long long>(record.endTick - record.beginTick),
+            record.snapshotCount,
+            record.rwValidMask,
+            record.flags,
+            record.deviceChangedMask);
+        for (uint32_t snapshotIndex = 0;
+             snapshotIndex < record.snapshotCount && snapshotIndex < 3;
+             ++snapshotIndex) {
+            if ((record.rwValidMask & (1u << snapshotIndex)) != 0) {
+                std::fprintf(file, " rw%u", snapshotIndex);
+                for (size_t stateIndex = 0;
+                     stateIndex < kProperShadersAlphaRenderStateCount;
+                     ++stateIndex) {
+                    std::fprintf(file, " %s=%u(0x%08X)",
+                        kProperShadersAlphaRenderStateNames[stateIndex],
+                        record.rwStates[snapshotIndex][stateIndex],
+                        record.rwStates[snapshotIndex][stateIndex]);
+                }
+                std::fputc('\n', file);
+            }
+            WriteProperShadersD3D9StateSnapshot(
+                file, snapshotIndex, record.snapshots[snapshotIndex]);
+        }
+    }
+    std::fprintf(file, "# capture=%ld end records=%u\n", captureId, copied);
+    std::fflush(file);
+    std::fclose(file);
+    VirtualFree(records, 0, MEM_RELEASE);
+    Log("proper shaders state ring: capture=%ld dumped records=%u newest=%u path=%s",
+        captureId, copied, newestSequence, g_properShadersStateTracePath);
+}
+
+void MaybeDumpProperShadersStateTraceRing()
+{
+    if (!g_config.enableProperShadersStateRingTrace) {
+        return;
+    }
+
+    const bool triggerDown =
+        (GetAsyncKeyState(g_config.properShadersStateRingTriggerVirtualKey) & 0x8000) != 0;
+    if (!triggerDown) {
+        InterlockedExchange(&g_properShadersStateTraceTriggerDown, 0);
+        return;
+    }
+    if (InterlockedCompareExchange(&g_properShadersStateTraceTriggerDown, 1, 0) != 0) {
+        return;
+    }
+    DumpProperShadersStateTraceRing();
+}
+
+void StoreProperShadersStateTraceRecord(ProperShadersStateTraceRecord* record)
+{
+    if (!record || !g_config.enableProperShadersStateRingTrace) {
+        return;
+    }
+
+    record->endTick = GetTickCount64();
+    DWORD allocationError = ERROR_SUCCESS;
+    AcquireSRWLockExclusive(&g_properShadersStateTraceLock);
+    if (!g_properShadersStateTraceRing) {
+        g_properShadersStateTraceRing =
+            static_cast<ProperShadersStateTraceRecord*>(VirtualAlloc(
+                nullptr,
+                kProperShadersStateTraceBytes,
+                MEM_RESERVE | MEM_COMMIT,
+                PAGE_READWRITE));
+        if (!g_properShadersStateTraceRing) {
+            allocationError = GetLastError();
+        }
+    }
+    if (g_properShadersStateTraceRing) {
+        record->sequence = ++g_properShadersStateTraceSequence;
+        g_properShadersStateTraceRing[
+            (record->sequence - 1) % kProperShadersStateTraceCapacity] = *record;
+    }
+    ReleaseSRWLockExclusive(&g_properShadersStateTraceLock);
+    if (!record->sequence) {
+        static LONG allocationFailureLogs = 0;
+        if (InterlockedIncrement(&allocationFailureLogs) <= 2) {
+            Log("proper shaders state ring: allocation failed bytes=%u gle=%lu",
+                static_cast<unsigned>(kProperShadersStateTraceBytes),
+                allocationError);
+        }
+        return;
+    }
+    MaybeDumpProperShadersStateTraceRing();
+}
+
+bool SynchronizeD3D9DeviceAlphaRenderStates(
+    const uint32_t* desired,
+    uint32_t* actualBefore,
+    uint32_t* changedMask)
+{
+    if (!desired) {
+        return false;
+    }
+
+    D3D9RenderStateApi api{};
+    if (!ResolveD3D9RenderStateApi(&api)) {
+        return false;
+    }
+
+    uint32_t mask = 0;
+    __try {
+        for (size_t i = 0; i < kProperShadersAlphaRenderStateCount; ++i) {
+            uint32_t actual = 0;
+            const LONG getResult = api.getRenderState(
+                api.device, kProperShadersAlphaRenderStates[i], &actual);
+            if (getResult < 0) {
+                return false;
+            }
+            if (actualBefore) {
+                actualBefore[i] = actual;
+            }
+            // RenderWare reports UINT32_MAX for D3D9 states that it does not
+            // track. Treat that as an unavailable value, never as a device
+            // state to apply.
+            if (desired[i] == UINT32_MAX) {
+                continue;
+            }
+            if (actual != desired[i]) {
+                const LONG setResult = api.setRenderState(
+                    api.device, kProperShadersAlphaRenderStates[i], desired[i]);
+                if (setResult < 0) {
+                    return false;
+                }
+                mask |= 1u << i;
+            }
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+
+    if (changedMask) {
+        *changedMask = mask;
+    }
+    return true;
+}
+
+bool CaptureProperShadersAlphaRenderStates(uint32_t* values)
+{
+    if (!values || InterlockedCompareExchange(&g_properShadersRenderStateGuardApiReady, 0, 0) == 0) {
+        return false;
+    }
+
+    using GetRenderStateFn = void(__cdecl*)(uint32_t, void*);
+    auto getRenderState = reinterpret_cast<GetRenderStateFn>(kRwD3D9GetRenderState);
+    __try {
+        for (size_t i = 0; i < kProperShadersAlphaRenderStateCount; ++i) {
+            getRenderState(kProperShadersAlphaRenderStates[i], &values[i]);
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        InterlockedExchange(&g_properShadersRenderStateGuardApiReady, 0);
+        return false;
+    }
+    return true;
+}
+
+void InitializeProperShadersStateTraceRecord(
+    ProperShadersStateTraceRecord* record,
+    ProperShadersStateTraceKind kind)
+{
+    if (!record) {
+        return;
+    }
+    *record = ProperShadersStateTraceRecord{};
+    record->kind = static_cast<uint32_t>(kind);
+    record->threadId = GetCurrentThreadId();
+    record->beginTick = GetTickCount64();
+}
+
+void CaptureProperShadersStateTracePoint(
+    ProperShadersStateTraceRecord* record,
+    uint32_t snapshotIndex)
+{
+    if (!record || snapshotIndex >= 3 || !g_config.enableProperShadersStateRingTrace) {
+        return;
+    }
+
+    if (CaptureProperShadersAlphaRenderStates(record->rwStates[snapshotIndex])) {
+        record->rwValidMask |= 1u << snapshotIndex;
+    }
+    CaptureProperShadersD3D9StateSnapshot(&record->snapshots[snapshotIndex]);
+    if (record->snapshotCount <= snapshotIndex) {
+        record->snapshotCount = snapshotIndex + 1;
+    }
+}
+
+bool RestoreProperShadersAlphaTestRenderStates(const uint32_t* values)
+{
+    if (!values || InterlockedCompareExchange(&g_properShadersRenderStateGuardApiReady, 0, 0) == 0) {
+        return false;
+    }
+
+    using SetRenderStateFn = void(__cdecl*)(uint32_t, uint32_t);
+    auto setRenderState = reinterpret_cast<SetRenderStateFn>(kRwD3D9SetRenderState);
+    __try {
+        setRenderState(kProperShadersAlphaRenderStates[0], values[0]);
+        setRenderState(kProperShadersAlphaRenderStates[3], values[3]);
+        setRenderState(kProperShadersAlphaRenderStates[4], values[4]);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        InterlockedExchange(&g_properShadersRenderStateGuardApiReady, 0);
+        return false;
+    }
+    return true;
+}
+
+int PushProperShadersMainSceneBaseline(
+    const uint32_t* alphaStates,
+    uint32_t* stencilEnable,
+    bool* stencilValid)
+{
+    if (!alphaStates) {
+        return -1;
+    }
+
+    const LONG depth = g_properShadersMainSceneBaselineDepth;
+    if (depth < 0 || depth >= static_cast<LONG>(kProperShadersMainSceneBaselineCapacity)) {
+        return -1;
+    }
+
+    ProperShadersMainSceneBaseline baseline{};
+    baseline.valid = true;
+    baseline.threadId = GetCurrentThreadId();
+    baseline.alphaTest = alphaStates[0];
+    baseline.alphaRef = alphaStates[3];
+    baseline.alphaFunc = alphaStates[4];
+    baseline.stencilValid = ReadD3D9DeviceRenderState(52, &baseline.stencilEnable);
+    g_properShadersMainSceneBaselines[depth] = baseline;
+    g_properShadersMainSceneBaselineDepth = depth + 1;
+
+    if (stencilEnable) {
+        *stencilEnable = baseline.stencilEnable;
+    }
+    if (stencilValid) {
+        *stencilValid = baseline.stencilValid;
+    }
+    return static_cast<int>(depth);
+}
+
+void PopProperShadersMainSceneBaseline(int baselineIndex)
+{
+    if (baselineIndex < 0 ||
+        baselineIndex >= static_cast<int>(kProperShadersMainSceneBaselineCapacity)) {
+        return;
+    }
+
+    g_properShadersMainSceneBaselines[baselineIndex] = ProperShadersMainSceneBaseline{};
+    if (g_properShadersMainSceneBaselineDepth == baselineIndex + 1) {
+        g_properShadersMainSceneBaselineDepth = baselineIndex;
+    }
+}
+
+extern "C" void __cdecl Bridge_RestoreProperShadersMainSceneBaseline()
+{
+    const LONG depth = g_properShadersMainSceneBaselineDepth;
+    if (depth <= 0 || depth > static_cast<LONG>(kProperShadersMainSceneBaselineCapacity)) {
+        return;
+    }
+
+    const ProperShadersMainSceneBaseline baseline =
+        g_properShadersMainSceneBaselines[depth - 1];
+    if (!baseline.valid || baseline.threadId != GetCurrentThreadId()) {
+        return;
+    }
+
+    uint32_t desired[kProperShadersAlphaRenderStateCount]{};
+    for (size_t i = 0; i < kProperShadersAlphaRenderStateCount; ++i) {
+        desired[i] = UINT32_MAX;
+    }
+    desired[0] = baseline.alphaTest;
+    desired[3] = baseline.alphaRef;
+    desired[4] = baseline.alphaFunc;
+
+    const bool rwRestored = RestoreProperShadersAlphaTestRenderStates(desired);
+    uint32_t deviceBefore[kProperShadersAlphaRenderStateCount]{};
+    uint32_t deviceChangedMask = 0;
+    const bool deviceRestored = rwRestored && SynchronizeD3D9DeviceAlphaRenderStates(
+        desired, deviceBefore, &deviceChangedMask);
+
+    uint32_t stencilBefore = UINT32_MAX;
+    bool stencilChanged = false;
+    const bool stencilRestored = !baseline.stencilValid || SynchronizeD3D9DeviceRenderState(
+        52,
+        baseline.stencilEnable,
+        &stencilBefore,
+        &stencilChanged);
+
+    if (deviceChangedMask != 0 || stencilChanged) {
+        const LONG logIndex = InterlockedIncrement(&g_properShadersMainSceneStateChangeLogs);
+        if (logIndex <= 32) {
+            Log("proper shaders main-scene guard: rwRestored=%d deviceRestored=%d deviceMask=0x%03X stencilRestored=%d stencilChanged=%d stencilActual=%u stencilExpected=%u alphaTest=%u alphaRef=%u alphaFunc=%u",
+                rwRestored ? 1 : 0,
+                deviceRestored ? 1 : 0,
+                deviceChangedMask,
+                stencilRestored ? 1 : 0,
+                stencilChanged ? 1 : 0,
+                stencilBefore,
+                baseline.stencilEnable,
+                baseline.alphaTest,
+                baseline.alphaRef,
+                baseline.alphaFunc);
+        }
+    }
+}
+
+#if defined(_M_IX86)
+extern "C" __declspec(naked) void Bridge_ProperShadersMainSceneStateGuard()
+{
+    __asm
+    {
+        pushfd
+        pushad
+        call Bridge_RestoreProperShadersMainSceneBaseline
+        popad
+        popfd
+        jmp dword ptr [g_properShadersMainSceneStateTrampoline]
+    }
+}
+#else
+extern "C" void Bridge_ProperShadersMainSceneStateGuard()
+{
+    Bridge_RestoreProperShadersMainSceneBaseline();
+}
+#endif
+
+bool SynchronizeProperShadersFadingAlphaState();
+
+extern "C" void __cdecl Bridge_ProperShadersPatchedRenderSceneGuard()
+{
+    const uintptr_t trampoline = g_properShadersPatchedRenderSceneTrampoline;
+    if (!trampoline) {
+        return;
+    }
+
+    const bool traceEnabled = g_config.enableProperShadersStateRingTrace;
+    ProperShadersStateTraceRecord traceRecord{};
+    if (traceEnabled) {
+        InitializeProperShadersStateTraceRecord(
+            &traceRecord, kProperShadersStateTraceRenderScene);
+        CaptureProperShadersStateTracePoint(&traceRecord, 0);
+    }
+
+    // ProperShaders can leave the low-level D3D9 cache at its depth-pass
+    // values before this guard is installed. Reconstruct the RW alpha state
+    // first so the snapshot is a usable scene-render baseline.
+    const bool entrySynchronized = SynchronizeProperShadersFadingAlphaState();
+    if (traceEnabled) {
+        CaptureProperShadersStateTracePoint(&traceRecord, 1);
+        if (entrySynchronized) {
+            traceRecord.flags |= 0x00000001;
+        }
+    }
+
+    uint32_t before[kProperShadersAlphaRenderStateCount]{};
+    bool captured = false;
+    if (traceEnabled && (traceRecord.rwValidMask & (1u << 1)) != 0) {
+        std::memcpy(before, traceRecord.rwStates[1], sizeof(before));
+        captured = true;
+    } else {
+        captured = CaptureProperShadersAlphaRenderStates(before);
+    }
+
+    uint32_t baselineStencilEnable = 0;
+    bool baselineStencilValid = false;
+    const int mainSceneBaselineIndex = captured
+        ? PushProperShadersMainSceneBaseline(
+            before, &baselineStencilEnable, &baselineStencilValid)
+        : -1;
+    reinterpret_cast<void(__cdecl*)()>(trampoline)();
+    PopProperShadersMainSceneBaseline(mainSceneBaselineIndex);
+
+    uint32_t after[kProperShadersAlphaRenderStateCount]{};
+    const LONG sample = InterlockedIncrement(&g_properShadersRenderStateSampleAttempts);
+    bool sampled = false;
+    if (traceEnabled) {
+        CaptureProperShadersStateTracePoint(&traceRecord, 2);
+        if ((traceRecord.rwValidMask & (1u << 2)) != 0) {
+            std::memcpy(after, traceRecord.rwStates[2], sizeof(after));
+            sampled = true;
+        }
+    }
+    if (!sampled && sample <= 3600) {
+        sampled = CaptureProperShadersAlphaRenderStates(after);
+    }
+
+    if (!captured) {
+        if (traceEnabled) {
+            if (sampled) {
+                traceRecord.flags |= 0x00000004;
+            }
+            StoreProperShadersStateTraceRecord(&traceRecord);
+        }
+        return;
+    }
+
+    const bool changed = sampled && std::memcmp(before, after, sizeof(before)) != 0;
+    const bool restored = RestoreProperShadersAlphaTestRenderStates(before);
+    uint32_t deviceRestoreTarget[kProperShadersAlphaRenderStateCount]{};
+    for (size_t i = 0; i < kProperShadersAlphaRenderStateCount; ++i) {
+        deviceRestoreTarget[i] = UINT32_MAX;
+    }
+    deviceRestoreTarget[0] = before[0];
+    deviceRestoreTarget[3] = before[3];
+    deviceRestoreTarget[4] = before[4];
+    uint32_t deviceBeforeRestore[kProperShadersAlphaRenderStateCount]{};
+    uint32_t deviceChangedMask = 0;
+    const bool deviceRestored = restored && SynchronizeD3D9DeviceAlphaRenderStates(
+        deviceRestoreTarget, deviceBeforeRestore, &deviceChangedMask);
+    uint32_t stencilBeforeRestore = UINT32_MAX;
+    bool stencilChanged = false;
+    const bool stencilRestored = !baselineStencilValid || SynchronizeD3D9DeviceRenderState(
+        52,
+        baselineStencilEnable,
+        &stencilBeforeRestore,
+        &stencilChanged);
+
+    if (traceEnabled) {
+        traceRecord.flags |= 0x00000002;
+        if (sampled) {
+            traceRecord.flags |= 0x00000004;
+        }
+        if (restored) {
+            traceRecord.flags |= 0x00000008;
+        }
+        if (deviceRestored) {
+            traceRecord.flags |= 0x00000010;
+        }
+        if (stencilRestored) {
+            traceRecord.flags |= 0x00000020;
+        }
+        traceRecord.deviceChangedMask = deviceChangedMask;
+        StoreProperShadersStateTraceRecord(&traceRecord);
+    }
+
+    if (changed || deviceChangedMask != 0 || stencilChanged) {
+        const LONG logIndex = InterlockedIncrement(&g_properShadersRenderStateChangeLogs);
+        if (logIndex <= 16) {
+            Log("proper shaders render-state guard: rwRestored=%d deviceRestored=%d deviceMask=0x%03X stencilRestored=%d stencilChanged=%d stencilActual=%u stencilExpected=%u alphaTest post=%u pre=%u device=%u alphaBlend post=%u pre=%u device=%u src post=%u pre=%u dest post=%u pre=%u alphaFunc post=%u pre=%u device=%u alphaRef post=%u pre=%u device=%u separateAlpha post=%u pre=%u",
+                restored ? 1 : 0,
+                deviceRestored ? 1 : 0,
+                deviceChangedMask,
+                stencilRestored ? 1 : 0,
+                stencilChanged ? 1 : 0,
+                stencilBeforeRestore,
+                baselineStencilEnable,
+                after[0], before[0],
+                deviceBeforeRestore[0],
+                after[5], before[5],
+                deviceBeforeRestore[5],
+                after[1], before[1],
+                after[2], before[2],
+                after[4], before[4],
+                deviceBeforeRestore[4],
+                after[3], before[3],
+                deviceBeforeRestore[3],
+                after[7], before[7]);
+        }
+    }
+}
+
+void InstallProperShadersRenderStateGuard(HMODULE psAsi, uint32_t psTextHash)
+{
+#if defined(_M_IX86)
+    if (!g_config.enableProperShadersRenderStateGuard || !psAsi ||
+        !IsSupportedProperShadersTextHash(psTextHash)) {
+        return;
+    }
+
+    const uintptr_t patchAddress = reinterpret_cast<uintptr_t>(psAsi) + 0x1ED80;
+    const uintptr_t guardTarget = reinterpret_cast<uintptr_t>(Bridge_ProperShadersPatchedRenderSceneGuard);
+    const uintptr_t currentTarget = DecodeRel32JumpTarget(patchAddress);
+    if (currentTarget == guardTarget) {
+        InterlockedExchange(&g_properShadersRenderStateGuardInstallState, 2);
+        return;
+    }
+
+    if (InterlockedCompareExchange(&g_properShadersRenderStateGuardInstallState, 1, 0) != 0) {
+        return;
+    }
+
+    static const uint8_t expected[] = { 0x55, 0x8B, 0xEC, 0x6A, 0xFF };
+    uint8_t current[sizeof(expected)]{};
+    bool readable = IsReadableCommitted(patchAddress, sizeof(current));
+    if (readable) {
+        __try {
+            std::memcpy(current, reinterpret_cast<const void*>(patchAddress), sizeof(current));
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) {
+            readable = false;
+        }
+    }
+
+    if (!readable || std::memcmp(current, expected, sizeof(expected)) != 0) {
+        Log("proper shaders render-state guard: signature mismatch PS+0x1ED80 got=%02X %02X %02X %02X %02X textHash=0x%08X",
+            current[0], current[1], current[2], current[3], current[4], psTextHash);
+        InterlockedExchange(&g_properShadersRenderStateGuardInstallState, 0);
+        return;
+    }
+
+    if (!IsExecutableCommitted(kRwD3D9SetRenderState) || !IsExecutableCommitted(kRwD3D9GetRenderState)) {
+        Log("proper shaders render-state guard: GTA D3D9 state API unavailable set=0x%08X get=0x%08X",
+            kRwD3D9SetRenderState, kRwD3D9GetRenderState);
+        InterlockedExchange(&g_properShadersRenderStateGuardInstallState, 0);
+        return;
+    }
+
+    const uintptr_t trampoline = CreateRel32Trampoline(patchAddress, sizeof(expected));
+    if (!trampoline) {
+        Log("proper shaders render-state guard: trampoline creation failed PS+0x1ED80");
+        InterlockedExchange(&g_properShadersRenderStateGuardInstallState, 0);
+        return;
+    }
+
+    g_properShadersPatchedRenderSceneTrampoline = trampoline;
+    InterlockedExchange(&g_properShadersRenderStateGuardApiReady, 1);
+    if (!WriteRel32Jump(patchAddress, guardTarget)) {
+        InterlockedExchange(&g_properShadersRenderStateGuardApiReady, 0);
+        g_properShadersPatchedRenderSceneTrampoline = 0;
+        VirtualFree(reinterpret_cast<void*>(trampoline), 0, MEM_RELEASE);
+        InterlockedExchange(&g_properShadersRenderStateGuardInstallState, 0);
+        return;
+    }
+
+    InterlockedExchange(&g_properShadersRenderStateGuardInstallState, 2);
+    Log("proper shaders render-state guard: installed PS+0x1ED80 trampoline=0x%08X guard=0x%08X states=%u textHash=0x%08X",
+        trampoline,
+        guardTarget,
+        static_cast<unsigned>(kProperShadersAlphaRenderStateCount),
+        psTextHash);
+#else
+    (void)psAsi;
+    (void)psTextHash;
+#endif
+}
+
+struct ProperShadersRwAlphaState {
+    uint32_t alphaFunction = 0;
+    uint32_t alphaReference = 0;
+};
+
+bool ReadProperShadersRwAlphaState(ProperShadersRwAlphaState* state)
+{
+    if (!state || !IsReadableCommitted(0x00C97B24, sizeof(uintptr_t))) {
+        return false;
+    }
+
+    using RwRenderStateGetFn = int(__cdecl*)(uint32_t, void*);
+    __try {
+        const uintptr_t rwGlobals = *reinterpret_cast<const uintptr_t*>(0x00C97B24);
+        if (!rwGlobals || !IsReadableCommitted(rwGlobals + 0x24, sizeof(uintptr_t))) {
+            return false;
+        }
+        auto getState = *reinterpret_cast<RwRenderStateGetFn const*>(rwGlobals + 0x24);
+        if (!getState || !IsExecutableCommitted(reinterpret_cast<uintptr_t>(getState))) {
+            return false;
+        }
+
+        getState(29, &state->alphaFunction);
+        getState(30, &state->alphaReference);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    return true;
+}
+
+bool SynchronizeProperShadersFadingAlphaState()
+{
+    ProperShadersRwAlphaState expected{};
+    if (!ReadProperShadersRwAlphaState(&expected) ||
+        InterlockedCompareExchange(&g_properShadersRenderStateGuardApiReady, 0, 0) == 0) {
+        return false;
+    }
+
+    uint32_t desired[kProperShadersAlphaRenderStateCount]{};
+    for (size_t i = 0; i < kProperShadersAlphaRenderStateCount; ++i) {
+        desired[i] = UINT32_MAX;
+    }
+
+    const uint32_t expectedAlphaTest =
+        expected.alphaFunction != 0 && expected.alphaFunction != 8 ? 1u : 0u;
+    desired[0] = expectedAlphaTest;
+    desired[3] = expected.alphaReference;
+    desired[4] = expected.alphaFunction;
+
+    if (!RestoreProperShadersAlphaTestRenderStates(desired)) {
+        return false;
+    }
+
+    uint32_t actual[kProperShadersAlphaRenderStateCount]{};
+    uint32_t deviceChangedMask = 0;
+    if (!SynchronizeD3D9DeviceAlphaRenderStates(desired, actual, &deviceChangedMask)) {
+        return false;
+    }
+
+    if (deviceChangedMask != 0) {
+        const LONG logIndex = InterlockedIncrement(&g_properShadersFadingStateChangeLogs);
+        if (logIndex <= 16) {
+            Log("proper shaders fading-state guard: alpha-test-only deviceMask=0x%03X alphaTest actual=%u expected=%u alphaFunc actual=%u expected=%u alphaRef actual=%u expected=%u",
+                deviceChangedMask,
+                actual[0], desired[0],
+                actual[4], desired[4],
+                actual[3], desired[3]);
+        }
+    }
+    return true;
+}
+
+extern "C" void __cdecl Bridge_ProperShadersRenderFadingEntitiesGuard()
+{
+    const bool traceEnabled = g_config.enableProperShadersStateRingTrace;
+    ProperShadersStateTraceRecord traceRecord{};
+    if (traceEnabled) {
+        InitializeProperShadersStateTraceRecord(
+            &traceRecord, kProperShadersStateTraceFadingEntities);
+        CaptureProperShadersStateTracePoint(&traceRecord, 0);
+    }
+
+    const bool synchronized = SynchronizeProperShadersFadingAlphaState();
+    if (traceEnabled) {
+        CaptureProperShadersStateTracePoint(&traceRecord, 1);
+        if (synchronized) {
+            traceRecord.flags |= 0x00000001;
+        }
+    }
+
+    const uintptr_t trampoline = g_properShadersRenderFadingEntitiesTrampoline;
+    if (trampoline) {
+        reinterpret_cast<void(__cdecl*)()>(trampoline)();
+    }
+
+    if (traceEnabled) {
+        CaptureProperShadersStateTracePoint(&traceRecord, 2);
+        StoreProperShadersStateTraceRecord(&traceRecord);
+    }
+}
+
+void InstallProperShadersFadingStateGuard(HMODULE psAsi, uint32_t psTextHash)
+{
+#if defined(_M_IX86)
+    if (!g_config.enableProperShadersRenderStateGuard || !psAsi ||
+        !IsSupportedProperShadersTextHash(psTextHash)) {
+        return;
+    }
+
+    const uintptr_t psBase = reinterpret_cast<uintptr_t>(psAsi);
+    const uintptr_t patchAddress = psBase + 0x1ED60;
+    const uintptr_t guardTarget = reinterpret_cast<uintptr_t>(Bridge_ProperShadersRenderFadingEntitiesGuard);
+    if (DecodeRel32JumpTarget(patchAddress) == guardTarget) {
+        InterlockedExchange(&g_properShadersFadingStateGuardInstallState, 2);
+        return;
+    }
+
+    if (InterlockedCompareExchange(&g_properShadersFadingStateGuardInstallState, 1, 0) != 0) {
+        return;
+    }
+
+    uint8_t current[5]{};
+    bool readable = IsReadableCommitted(patchAddress, sizeof(current));
+    if (readable) {
+        __try {
+            std::memcpy(current, reinterpret_cast<const void*>(patchAddress), sizeof(current));
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) {
+            readable = false;
+        }
+    }
+
+    uint32_t pushedString = 0;
+    if (readable) {
+        std::memcpy(&pushedString, current + 1, sizeof(pushedString));
+    }
+    const uintptr_t expectedString = psBase + 0x12D640;
+    if (!readable || current[0] != 0x68 || pushedString != expectedString) {
+        Log("proper shaders fading-state guard: signature mismatch PS+0x1ED60 got=%02X %02X %02X %02X %02X pushed=0x%08X expected=0x%08X textHash=0x%08X",
+            current[0], current[1], current[2], current[3], current[4],
+            pushedString, expectedString, psTextHash);
+        InterlockedExchange(&g_properShadersFadingStateGuardInstallState, 0);
+        return;
+    }
+
+    if (!IsExecutableCommitted(kRwD3D9SetRenderState) || !IsExecutableCommitted(kRwD3D9GetRenderState)) {
+        Log("proper shaders fading-state guard: GTA D3D9 state API unavailable");
+        InterlockedExchange(&g_properShadersFadingStateGuardInstallState, 0);
+        return;
+    }
+
+    const uintptr_t trampoline = CreateRel32Trampoline(patchAddress, sizeof(current));
+    if (!trampoline) {
+        Log("proper shaders fading-state guard: trampoline creation failed PS+0x1ED60");
+        InterlockedExchange(&g_properShadersFadingStateGuardInstallState, 0);
+        return;
+    }
+
+    g_properShadersRenderFadingEntitiesTrampoline = trampoline;
+    InterlockedExchange(&g_properShadersRenderStateGuardApiReady, 1);
+    if (!WriteRel32Jump(patchAddress, guardTarget)) {
+        g_properShadersRenderFadingEntitiesTrampoline = 0;
+        VirtualFree(reinterpret_cast<void*>(trampoline), 0, MEM_RELEASE);
+        InterlockedExchange(&g_properShadersFadingStateGuardInstallState, 0);
+        return;
+    }
+
+    InterlockedExchange(&g_properShadersFadingStateGuardInstallState, 2);
+    Log("proper shaders fading-state guard: installed PS+0x1ED60 trampoline=0x%08X guard=0x%08X textHash=0x%08X",
+        trampoline, guardTarget, psTextHash);
+#else
+    (void)psAsi;
+    (void)psTextHash;
+#endif
+}
+
+void InstallProperShadersMainSceneStateGuard(HMODULE psAsi, uint32_t psTextHash)
+{
+#if defined(_M_IX86)
+    if (!g_config.enableProperShadersRenderStateGuard || !psAsi ||
+        !IsSupportedProperShadersTextHash(psTextHash)) {
+        return;
+    }
+
+    const uintptr_t psBase = reinterpret_cast<uintptr_t>(psAsi);
+    // FUN_1001EAA0 clears phaseAlternate at +0x1EAA6. Hook the next
+    // complete instruction so state restoration runs after that clear and
+    // before the first main-scene render call.
+    const uintptr_t patchAddress = psBase + 0x1EAB0;
+    const uintptr_t guardTarget =
+        reinterpret_cast<uintptr_t>(Bridge_ProperShadersMainSceneStateGuard);
+    if (DecodeRel32JumpTarget(patchAddress) == guardTarget) {
+        InterlockedExchange(&g_properShadersMainSceneStateGuardInstallState, 2);
+        return;
+    }
+
+    if (InterlockedCompareExchange(
+            &g_properShadersMainSceneStateGuardInstallState, 1, 0) != 0) {
+        return;
+    }
+
+    static const uint8_t expected[] = {
+        0x83, 0x3D, 0x24, 0xC7, 0xC7, 0x00, 0x00,
+    };
+    uint8_t current[sizeof(expected)]{};
+    bool readable = IsReadableCommitted(patchAddress, sizeof(current));
+    if (readable) {
+        __try {
+            std::memcpy(current, reinterpret_cast<const void*>(patchAddress), sizeof(current));
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) {
+            readable = false;
+        }
+    }
+    if (!readable || std::memcmp(current, expected, sizeof(expected)) != 0) {
+        Log("proper shaders main-scene guard: signature mismatch PS+0x1EAB0 got=%02X %02X %02X %02X %02X %02X %02X textHash=0x%08X",
+            current[0], current[1], current[2], current[3],
+            current[4], current[5], current[6], psTextHash);
+        InterlockedExchange(&g_properShadersMainSceneStateGuardInstallState, 0);
+        return;
+    }
+
+    const uintptr_t trampoline = CreateRel32Trampoline(patchAddress, sizeof(expected));
+    if (!trampoline) {
+        Log("proper shaders main-scene guard: trampoline creation failed PS+0x1EAB0");
+        InterlockedExchange(&g_properShadersMainSceneStateGuardInstallState, 0);
+        return;
+    }
+
+    g_properShadersMainSceneStateTrampoline = trampoline;
+    if (!WriteRel32Jump(patchAddress, guardTarget)) {
+        g_properShadersMainSceneStateTrampoline = 0;
+        VirtualFree(reinterpret_cast<void*>(trampoline), 0, MEM_RELEASE);
+        InterlockedExchange(&g_properShadersMainSceneStateGuardInstallState, 0);
+        return;
+    }
+
+    InterlockedExchange(&g_properShadersMainSceneStateGuardInstallState, 2);
+    Log("proper shaders main-scene guard: installed PS+0x1EAB0 trampoline=0x%08X guard=0x%08X textHash=0x%08X",
+        trampoline, guardTarget, psTextHash);
+#else
+    (void)psAsi;
+    (void)psTextHash;
+#endif
+}
+
 void InstallProperShadersVtableGuard()
 {
 #if defined(_M_IX86)
-    // Hook conflict fix: always run if PS ASI is loaded (regardless of d3d9 proxy)
     HMODULE psAsi = GetModuleHandleA("ProperShaders.asi");
     if (!psAsi) {
-        Log("ps vtable guard: ProperShaders.asi not loaded, skipping");
-        return;
+        psAsi = GetModuleHandleA("propershaders.asi");
     }
-    Log("ps vtable guard: ProperShaders.asi loaded at 0x%p", psAsi);
-
-    // Fix hook overlap at 0x731CC8 (FLA) vs 0x731CCB (PS)
-    {
-        uint8_t hookBytes[16]{};
-        if (IsReadableCommitted(0x731CC8, 16)) {
-            __try { std::memcpy(hookBytes, reinterpret_cast<void*>(0x731CC8), 16); } __except(EXCEPTION_EXECUTE_HANDLER) {}
-        }
-        Log("ps vtable guard: 0x731CC8 bytes: %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X",
-            hookBytes[0], hookBytes[1], hookBytes[2], hookBytes[3], hookBytes[4], hookBytes[5],
-            hookBytes[6], hookBytes[7], hookBytes[8], hookBytes[9], hookBytes[10], hookBytes[11],
-            hookBytes[12], hookBytes[13], hookBytes[14], hookBytes[15]);
-
-        // If FLA wrote JMP at 0x731CC8 and PS overwrote at 0x731CCB:
-        // FLA's E9 at [0] is intact but its offset at [1-4] got corrupted by PS's E9 at [3]
-        if (hookBytes[0] == 0xE9) {
-            int32_t currentOffset = *reinterpret_cast<int32_t*>(&hookBytes[1]);
-            uintptr_t currentTarget = 0x731CC8 + 5 + currentOffset;
-            Log("ps vtable guard: FLA JMP at 0x731CC8 -> target=0x%08X (offset=0x%08X)", currentTarget, currentOffset);
-
-            if (hookBytes[3] == 0xE9) {
-                Log("ps vtable guard: CONFLICT DETECTED - PS wrote E9 at 0x731CCB inside FLA's JMP offset!");
-                // PS's JMP offset is at hookBytes[4-7]
-                int32_t psOffset = *reinterpret_cast<int32_t*>(&hookBytes[4]);
-                uintptr_t psTarget = 0x731CCB + 5 + psOffset;
-                Log("ps vtable guard: PS JMP at 0x731CCB -> target=0x%08X", psTarget);
-
-                // Fix: scan FLA module for the thunk signature (03 C2 50 50 E8)
-                HMODULE fla = GetModuleHandleA("$fastman92limitAdjuster.asi");
-                if (fla) {
-                    uintptr_t flaBase = reinterpret_cast<uintptr_t>(fla);
-                    IMAGE_DOS_HEADER* dos = reinterpret_cast<IMAGE_DOS_HEADER*>(flaBase);
-                    IMAGE_NT_HEADERS* nt = reinterpret_cast<IMAGE_NT_HEADERS*>(flaBase + dos->e_lfanew);
-                    uintptr_t textStart = flaBase + nt->OptionalHeader.BaseOfCode;
-                    uintptr_t textEnd = textStart + nt->OptionalHeader.SizeOfCode;
-
-                    uintptr_t thunkAddr = 0;
-                    for (uintptr_t scan = textStart; scan < textEnd - 10; scan++) {
-                        uint8_t* p = reinterpret_cast<uint8_t*>(scan);
-                        // Signature: add eax,edx; push eax; push eax; call rel32
-                        if (p[0] == 0x03 && p[1] == 0xC2 && p[2] == 0x50 && p[3] == 0x50 && p[4] == 0xE8) {
-                            // Verify it ends with: add esp,4; pop eax; pop esi; retn
-                            int32_t callOff = *reinterpret_cast<int32_t*>(p + 5);
-                            if (p[9] == 0x83 && p[10] == 0xC4 && p[11] == 0x04 && p[12] == 0x58 && p[13] == 0x5E && p[14] == 0xC3) {
-                                thunkAddr = scan;
-                                break;
-                            }
-                        }
-                    }
-
-                    if (thunkAddr) {
-                        Log("ps vtable guard: found FLA thunk at 0x%08X, restoring JMP", thunkAddr);
-                        int32_t correctOffset = static_cast<int32_t>(thunkAddr - (0x731CC8 + 5));
-                        uint8_t jmpPatch[5];
-                        jmpPatch[0] = 0xE9;
-                        std::memcpy(jmpPatch + 1, &correctOffset, 4);
-                        WriteBytesWithProtect(0x731CC8, jmpPatch, 5);
-                        Log("ps vtable guard: restored FLA JMP 0x731CC8 -> 0x%08X", thunkAddr);
-                    } else {
-                        Log("ps vtable guard: FLA thunk signature not found!");
-                    }
-                }
-            }
-        }
-    }
-
-    // Patch PS ASI: prevent NULL return from shader name lookup (0x50BB0)
-    // At PS+0x50C1F: cmovz eax, edx (returns NULL when lookup fails)
-    // NOP it so eax stays as valid pointer (ecx+0xC) instead of 0
-    {
-        uintptr_t psBase = reinterpret_cast<uintptr_t>(psAsi);
-        uintptr_t patchAddr = psBase + 0x50C1F;
-        uint8_t currentBytes[3]{};
-        if (IsReadableCommitted(patchAddr, 3)) {
-            __try { std::memcpy(currentBytes, reinterpret_cast<void*>(patchAddr), 3); } __except(EXCEPTION_EXECUTE_HANDLER) {}
-        }
-        if (currentBytes[0] == 0x0F && currentBytes[1] == 0x44 && currentBytes[2] == 0xC2) {
-            uint8_t nop3[] = { 0x0F, 0x1F, 0x00 }; // 3-byte NOP
-            if (WriteBytesWithProtect(patchAddr, nop3, 3)) {
-                Log("ps vtable guard: patched PS+0x50C1F cmovz->NOP (prevents NULL shader name return)");
-            }
-        } else {
-            Log("ps vtable guard: PS+0x50C1F bytes don't match cmovz (got %02X %02X %02X)",
-                currentBytes[0], currentBytes[1], currentBytes[2]);
-        }
-    }
-
-    constexpr uintptr_t kBadAddress = 0x615CD2C0;
-    constexpr uintptr_t kAllocBase = kBadAddress & 0xFFFF0000;  // 64KB aligned: 0x615C0000
-    constexpr size_t kAllocSize = (kBadAddress - kAllocBase) + 0x100;  // enough to cover target + stub
-    MEMORY_BASIC_INFORMATION mbi{};
-    if (VirtualQuery(reinterpret_cast<void*>(kBadAddress), &mbi, sizeof(mbi))) {
-        bool alreadyExec = (mbi.State == MEM_COMMIT) &&
-            (mbi.Protect & (PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY));
-        if (alreadyExec) {
-            Log("ps vtable guard: 0x%08X already executable, no stub needed", kBadAddress);
-            return;
-        }
-    }
-
-    void* stubMem = VirtualAlloc(reinterpret_cast<void*>(kAllocBase), kAllocSize,
-        MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
-    if (!stubMem) {
-        Log("ps vtable guard: VirtualAlloc at 0x%08X size=0x%X failed (err=%u)",
-            kAllocBase, kAllocSize, GetLastError());
+    if (!psAsi) {
         return;
     }
 
-    uintptr_t stubBase = reinterpret_cast<uintptr_t>(stubMem);
-    if (kBadAddress >= stubBase && kBadAddress < stubBase + kAllocSize) {
-        uint8_t* stub = reinterpret_cast<uint8_t*>(kBadAddress);
-        stub[0] = 0x33; stub[1] = 0xC0;  // xor eax, eax
-        stub[2] = 0xC3;                    // ret
-        Log("ps vtable guard: installed safe stub at 0x%08X (xor eax,eax; ret) allocBase=0x%08X size=0x%X",
-            kBadAddress, stubBase, kAllocSize);
-    } else {
-        Log("ps vtable guard: alloc at 0x%p does not cover 0x%08X", stubMem, kBadAddress);
+    const uintptr_t psBase = reinterpret_cast<uintptr_t>(psAsi);
+    const uint32_t psTextHash = CalculateModuleFileTextHash(psAsi);
+    uint8_t hookBytes[8]{};
+    if (!IsReadableCommitted(0x731CC8, sizeof(hookBytes))) {
+        Log("proper shaders AddTxdSlot adapter: GTA hook bytes unreadable");
+        return;
+    }
+    __try {
+        std::memcpy(hookBytes, reinterpret_cast<const void*>(0x731CC8), sizeof(hookBytes));
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        Log("proper shaders AddTxdSlot adapter: GTA hook byte read failed");
+        return;
+    }
+
+    const uintptr_t adapter = reinterpret_cast<uintptr_t>(Bridge_ProperShadersAddTxdSlot_Combined);
+    const uintptr_t currentTarget = hookBytes[0] == 0xE9 ? DecodeRel32JumpTarget(0x731CC8) : 0;
+    const bool overlapPresent = currentTarget != adapter && hookBytes[0] == 0xE9 && hookBytes[3] == 0xE9;
+    const uintptr_t flaThunk = FindFlaAddTxdSlotThunk();
+    uintptr_t psTarget = 0;
+    const char* psTargetSource = "none";
+
+    if (overlapPresent) {
+        int32_t psOffset = 0;
+        std::memcpy(&psOffset, hookBytes + 4, sizeof(psOffset));
+        const uintptr_t overlapTarget = 0x731CCB + 5 + static_cast<intptr_t>(psOffset);
+        if (IsProperShadersAddTxdSlotThunk(psAsi, overlapTarget)) {
+            psTarget = overlapTarget;
+            psTargetSource = "overlap";
+        }
+    }
+
+    // If FLA overwrote a previously installed PS tail hook, recover the verified
+    // PS thunk from the known build instead of waiting for another overlap write.
+    if (!psTarget && IsSupportedProperShadersTextHash(psTextHash)) {
+        const uintptr_t verifiedTarget = psBase + 0x51630;
+        if (IsProperShadersAddTxdSlotThunk(psAsi, verifiedTarget)) {
+            psTarget = verifiedTarget;
+            psTargetSource = "verified-rva";
+        }
+    }
+
+    const bool flaOwnsEntry = hookBytes[0] == 0xE9 && flaThunk &&
+        (currentTarget == flaThunk || overlapPresent);
+    if (currentTarget != adapter && flaOwnsEntry && psTarget) {
+        g_flaAddTxdSlotThunk = flaThunk;
+        g_properShadersAddTxdSlotThunk = psTarget;
+        if (WriteRel32Jump(0x731CC8, adapter)) {
+            Log("proper shaders AddTxdSlot adapter: installed GTA=0x731CC8 bridge=0x%08X FLA=0x%08X PS=0x%08X source=%s fileTextHash=0x%08X",
+                adapter, flaThunk, psTarget, psTargetSource, psTextHash);
+        }
+    } else if (currentTarget == adapter) {
+        static LONG alreadyLogs = 0;
+        if (InterlockedIncrement(&alreadyLogs) <= 2) {
+            Log("proper shaders AddTxdSlot adapter: already installed FLA=0x%08X PS=0x%08X",
+                g_flaAddTxdSlotThunk, g_properShadersAddTxdSlotThunk);
+        }
+    } else if (overlapPresent) {
+        Log("proper shaders AddTxdSlot adapter: overlap rejected flaThunk=0x%08X psTarget=0x%08X psBase=0x%08X fileTextHash=0x%08X",
+            flaThunk, psTarget, psBase, psTextHash);
+    }
+
+    // This is a fixed-RVA patch and is allowed only for the verified local build.
+    if (!IsSupportedProperShadersTextHash(psTextHash)) {
+        static LONG hashMismatchLogs = 0;
+        if (InterlockedIncrement(&hashMismatchLogs) <= 2) {
+            Log("proper shaders fixed patch: unsupported file text hash=0x%08X expected=0x%08X; skipped",
+                psTextHash, kSupportedProperShadersTextHash);
+        }
+        return;
+    }
+
+    InstallProperShadersRenderStateGuard(psAsi, psTextHash);
+    InstallProperShadersFadingStateGuard(psAsi, psTextHash);
+    InstallProperShadersMainSceneStateGuard(psAsi, psTextHash);
+
+    const uintptr_t patchAddr = psBase + 0x50C1F;
+    uint8_t currentBytes[3]{};
+    if (!IsReadableCommitted(patchAddr, sizeof(currentBytes))) {
+        return;
+    }
+    __try {
+        std::memcpy(currentBytes, reinterpret_cast<const void*>(patchAddr), sizeof(currentBytes));
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return;
+    }
+
+    static const uint8_t expected[] = { 0x0F, 0x44, 0xC2 };
+    static const uint8_t replacement[] = { 0x0F, 0x1F, 0x00 };
+    if (std::memcmp(currentBytes, expected, sizeof(expected)) == 0) {
+        if (WriteBytesWithProtect(patchAddr, replacement, sizeof(replacement))) {
+            Log("proper shaders fixed patch: applied PS+0x50C1F textHash=0x%08X", psTextHash);
+        }
+    } else if (std::memcmp(currentBytes, replacement, sizeof(replacement)) != 0) {
+        Log("proper shaders fixed patch: signature mismatch at PS+0x50C1F got=%02X %02X %02X textHash=0x%08X",
+            currentBytes[0], currentBytes[1], currentBytes[2], psTextHash);
     }
 #endif
 }
@@ -15531,56 +18008,13 @@ void InstallProperShadersVtableGuard()
 void ApplyProperShadersCompat()
 {
 #if defined(_M_IX86)
-    uint32_t probedValue = 0;
-    const bool probeOk = SafeReadU32(0x848B9D + 3, &probedValue);
-    const uint32_t runtimeValue = static_cast<uint32_t>(g_relocatedCModelInfoPtrs);
     const uint32_t runtimeStreamingValue = static_cast<uint32_t>(g_relocatedStreamingInfo);
-
-    auto isUsableCModelInfoTable = [](uint32_t value) -> bool {
-        return value != 0 &&
-            value != kOriginalCModelInfoPtrs &&
-            value >= 0x00400000 &&
-            IsReadableCommitted(value, sizeof(uintptr_t));
-    };
     auto isUsableStreamingTable = [](uint32_t value) -> bool {
         return value != 0 &&
             value != kOriginalStreamingInfo &&
             value >= 0x00400000 &&
             IsReadableCommitted(value, sizeof(uintptr_t));
     };
-
-    const char* source = "runtime";
-    uint32_t flaNewValue = runtimeValue;
-    if (!isUsableCModelInfoTable(flaNewValue)) {
-        source = "probe";
-        flaNewValue = probedValue;
-    }
-
-    if (!isUsableCModelInfoTable(flaNewValue)) {
-        Log("proper shaders compat: FLA CModelInfo relocation not detected, skipping (runtime=0x%08X probed=0x%08X probeOk=%u)",
-            runtimeValue, probedValue, probeOk ? 1u : 0u);
-        return;
-    }
-
-    constexpr uintptr_t kRenderRangeStart = 0x840000;
-    constexpr uintptr_t kRenderRangeEnd = 0x8C0000;
-
-    uint32_t restored = 0;
-    for (uintptr_t addr = kRenderRangeStart; addr + 4 <= kRenderRangeEnd; addr += 1) {
-        uint32_t val = 0;
-        if (!SafeReadU32(addr, &val)) {
-            break;
-        }
-        if (val == flaNewValue) {
-            if (WriteBytesWithProtect(addr, reinterpret_cast<const uint8_t*>(&kOriginalCModelInfoPtrs), sizeof(kOriginalCModelInfoPtrs))) {
-                ++restored;
-            }
-        }
-    }
-
-    Log("proper shaders compat: source=%s scanned 0x%08X-0x%08X, restored %u CModelInfo pointer patches (0x%08X -> 0x%08X, runtime=0x%08X probed=0x%08X probeOk=%u)",
-        source, kRenderRangeStart, kRenderRangeEnd, restored, flaNewValue, kOriginalCModelInfoPtrs,
-        runtimeValue, probedValue, probeOk ? 1u : 0u);
 
     HMODULE psAsi = GetModuleHandleA("ProperShaders.asi");
     if (!psAsi) {
@@ -15593,6 +18027,12 @@ void ApplyProperShadersCompat()
     }
 
     uintptr_t psBase = reinterpret_cast<uintptr_t>(psAsi);
+    const uint32_t psTextHash = CalculateModuleFileTextHash(psAsi);
+    if (!IsSupportedProperShadersTextHash(psTextHash)) {
+        Log("proper shaders compat: CStreaming rewrite skipped unsupported textHash=0x%08X", psTextHash);
+        return;
+    }
+
     IMAGE_DOS_HEADER* dos = reinterpret_cast<IMAGE_DOS_HEADER*>(psBase);
     if (!IsReadableCommitted(psBase, sizeof(IMAGE_DOS_HEADER)) || dos->e_magic != IMAGE_DOS_SIGNATURE) {
         Log("proper shaders compat: PS CStreaming patch skipped invalid DOS header base=0x%08X", psBase);
@@ -15607,21 +18047,55 @@ void ApplyProperShadersCompat()
         return;
     }
 
-    const uintptr_t psEnd = psBase + nt->OptionalHeader.SizeOfImage;
+    IMAGE_SECTION_HEADER* sections = IMAGE_FIRST_SECTION(nt);
+    const size_t sectionBytes = static_cast<size_t>(nt->FileHeader.NumberOfSections) * sizeof(IMAGE_SECTION_HEADER);
+    if (!IsReadableCommitted(reinterpret_cast<uintptr_t>(sections), sectionBytes)) {
+        Log("proper shaders compat: PS CStreaming patch skipped unreadable section table base=0x%08X", psBase);
+        return;
+    }
+
+    uintptr_t textStart = 0;
+    size_t textSize = 0;
+    for (WORD i = 0; i < nt->FileHeader.NumberOfSections; ++i) {
+        if (std::memcmp(sections[i].Name, ".text\0\0\0", 8) == 0) {
+            textStart = psBase + sections[i].VirtualAddress;
+            textSize = sections[i].Misc.VirtualSize;
+            break;
+        }
+    }
+    if (!textStart || textSize < 5 || !IsReadableCommitted(textStart, textSize)) {
+        Log("proper shaders compat: PS CStreaming patch skipped invalid .text base=0x%08X start=0x%08X size=0x%X",
+            psBase, textStart, static_cast<unsigned>(textSize));
+        return;
+    }
+
+    uint8_t* textCopy = new uint8_t[textSize];
+    bool copied = false;
+    __try {
+        std::memcpy(textCopy, reinterpret_cast<const void*>(textStart), textSize);
+        copied = true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        copied = false;
+    }
+    if (!copied) {
+        delete[] textCopy;
+        Log("proper shaders compat: PS CStreaming patch skipped .text copy fault start=0x%08X size=0x%X",
+            textStart, static_cast<unsigned>(textSize));
+        return;
+    }
+
     uint32_t streamingPatched = 0;
     uint32_t streamingAlready = 0;
     uint32_t streamingCandidates = 0;
-    for (uintptr_t addr = psBase + 1; addr + 4 <= psEnd; ++addr) {
+    for (size_t offset = 1; offset + sizeof(uint32_t) <= textSize; ++offset) {
         uint32_t val = 0;
-        if (!SafeReadU32(addr, &val)) {
-            continue;
-        }
+        std::memcpy(&val, textCopy + offset, sizeof(val));
         if (val != kOriginalStreamingInfo && val != runtimeStreamingValue) {
             continue;
         }
 
-        uint8_t opcode = 0;
-        if (!SafeReadU8(addr - 1, &opcode) || opcode != 0xB9) {
+        if (textCopy[offset - 1] != 0xB9) {
             continue;
         }
 
@@ -15631,14 +18105,19 @@ void ApplyProperShadersCompat()
             continue;
         }
 
-        if (WriteBytesWithProtect(addr, reinterpret_cast<const uint8_t*>(&runtimeStreamingValue), sizeof(runtimeStreamingValue))) {
+        const uintptr_t patchAddress = textStart + offset;
+        if (WriteBytesWithProtect(patchAddress, reinterpret_cast<const uint8_t*>(&runtimeStreamingValue), sizeof(runtimeStreamingValue))) {
             ++streamingPatched;
+            std::memcpy(textCopy + offset, &runtimeStreamingValue, sizeof(runtimeStreamingValue));
         }
     }
+    delete[] textCopy;
 
-    Log("proper shaders compat: PS CStreaming scan module=0x%08X size=0x%X patched=%u already=%u candidates=%u (0x%08X -> 0x%08X)",
+    Log("proper shaders compat: PS CStreaming .text scan module=0x%08X imageSize=0x%X textSize=0x%X textHash=0x%08X patched=%u already=%u candidates=%u (0x%08X -> 0x%08X)",
         psBase,
         nt->OptionalHeader.SizeOfImage,
+        static_cast<unsigned>(textSize),
+        psTextHash,
         streamingPatched,
         streamingAlready,
         streamingCandidates,
@@ -15851,7 +18330,10 @@ bool IsProperShadersAddTxdSlotConflictPresent()
 
     const int32_t currentOffset = *reinterpret_cast<const int32_t*>(&hookBytes[1]);
     const uintptr_t currentTarget = 0x731CC8 + 5 + currentOffset;
-    return hookBytes[3] == 0xE9 || currentTarget == 0x615CD2C0;
+    if (currentTarget == reinterpret_cast<uintptr_t>(Bridge_ProperShadersAddTxdSlot_Combined)) {
+        return false;
+    }
+    return hookBytes[3] == 0xE9;
 #else
     return false;
 #endif
@@ -15874,17 +18356,35 @@ DWORD WINAPI EarlyProperShadersCompatThread(void*)
 {
     bool installedTextureGuards = false;
     bool touchedProperShadersOnce = false;
+    bool appliedRuntimeCompat = false;
 
     for (int attempt = 0; attempt < 400; ++attempt) {
         const bool psLoaded =
             GetModuleHandleA("ProperShaders.asi") != nullptr ||
             GetModuleHandleA("propershaders.asi") != nullptr;
         const bool conflict = IsProperShadersAddTxdSlotConflictPresent();
+        bool adapterInstalled = false;
+        if (IsReadableCommitted(0x731CC8, 5)) {
+            uint8_t opcode = 0;
+            __try {
+                opcode = *reinterpret_cast<const uint8_t*>(0x731CC8);
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER) {
+                opcode = 0;
+            }
+            adapterInstalled = opcode == 0xE9 &&
+                DecodeRel32JumpTarget(0x731CC8) == reinterpret_cast<uintptr_t>(Bridge_ProperShadersAddTxdSlot_Combined);
+        }
+        const bool periodicRetry = psLoaded && !adapterInstalled && (attempt % 40) == 0;
 
-        if (psLoaded && (!touchedProperShadersOnce || conflict)) {
+        if (psLoaded && (!touchedProperShadersOnce || conflict || periodicRetry)) {
             InstallEarlyProperShadersCompatOnce(!installedTextureGuards);
             touchedProperShadersOnce = true;
             installedTextureGuards = true;
+        }
+        if (psLoaded && !appliedRuntimeCompat && g_relocatedStreamingInfo) {
+            ApplyProperShadersCompat();
+            appliedRuntimeCompat = true;
         }
 
         if (attempt == 399 && conflict) {
@@ -15899,8 +18399,41 @@ DWORD WINAPI EarlyProperShadersCompatThread(void*)
 
 DWORD WINAPI BridgeThread(void*)
 {
-    Sleep(1500);
+    InitializeBridgeFilePaths();
     LoadBridgeConfig();
+    char configProbe[32]{};
+    const bool configReadable = ReadSmallTextValue(g_configPath, "EnableBridge", configProbe, sizeof(configProbe));
+    const DWORD detectedGameThreadId = FindProcessMainThreadId();
+    if (detectedGameThreadId) {
+        g_gameThreadId = detectedGameThreadId;
+    }
+    Log("thread init: bridge=%lu game=%lu detected=%lu",
+        GetCurrentThreadId(), g_gameThreadId, detectedGameThreadId);
+    Log("config source: path=%s readable=%d probe='%s' openRetries=%ld",
+        g_configPath,
+        configReadable ? 1 : 0,
+        configReadable ? configProbe : "",
+        g_bridgeConfigOpenRetries);
+    if (g_config.enableVectoredExceptionHandler && !g_vectoredExceptionHandlerHandle) {
+        g_vectoredExceptionHandlerHandle = AddVectoredExceptionHandler(1, BridgeVectoredExceptionHandler);
+        if (!g_vectoredExceptionHandlerHandle) {
+            Log("VEH init: AddVectoredExceptionHandler failed gle=%lu", GetLastError());
+        }
+    }
+    InstallCPoolsInitialiseReplayHook();
+    StartVehFuncsPoolAllocateGuardInstaller();
+    GuardOpenLimitAdjusterModuleLoad("bridge-init");
+    GuardOpenLimitAdjusterSaLimits("bridge-init");
+    if (g_config.enableProperShadersCompat) {
+        HANDLE earlyThread = CreateThread(nullptr, 0, EarlyProperShadersCompatThread, nullptr, 0, nullptr);
+        if (earlyThread) {
+            CloseHandle(earlyThread);
+        } else {
+            Log("early proper shaders compat: thread creation failed gle=%lu", GetLastError());
+        }
+    }
+
+    Sleep(1500);
     InstallWidescreenFixSpriteNameGuard();
     if (g_config.enableProperShadersCompat) {
         InstallProperShadersVtableGuard();
@@ -15915,9 +18448,6 @@ DWORD WINAPI BridgeThread(void*)
         GetModuleHandleA("DINPUT8Hooked.dll"),
         GetModuleHandleA("vorbisFile.dll"),
         GetModuleHandleA("vorbisHooked.dll"));
-    GuardOpenLimitAdjusterModuleLoad("bridge-thread");
-    GuardOpenLimitAdjusterSaLimits("bridge-thread");
-    RepairOpenLimitAdjusterSaPoolHooks("bridge-thread");
     AuditOpenLimitAdjusterSaOverlaps();
 
     LogIniValue("Apply ID limit patch");
@@ -15938,6 +18468,7 @@ DWORD WINAPI BridgeThread(void*)
 
     LogFLAExports();
     RefreshFlaRuntimeState();
+    StartFlaRuntimeStateRecovery();
     RefreshRadarTraceRuntimeState();
     if (g_config.enableProperShadersCompat) {
         ApplyProperShadersCompat();
@@ -16058,24 +18589,10 @@ DWORD WINAPI BridgeThread(void*)
         }
     }
     if (g_config.enableVehFuncsPoolAllocateGuard) {
-        InstallVehFuncsPoolAllocateGuard();
-        HANDLE vehFuncsPoolGuardThread = CreateThread(nullptr, 0, VehFuncsPoolAllocateGuardInstallThread, nullptr, 0, nullptr);
-        if (vehFuncsPoolGuardThread) {
-            CloseHandle(vehFuncsPoolGuardThread);
-        } else {
-            Log("VehFuncs pool allocate guard: delayed install thread creation failed gle=%lu", GetLastError());
-        }
+        StartVehFuncsPoolAllocateGuardInstaller();
     }
     if (g_config.enableAutoPoolAllocateGuard) {
         InstallAutoPoolAllocateGuards();
-    }
-    if (g_config.enableDeferredPoolAllocateReplay) {
-        HANDLE replayThread = CreateThread(nullptr, 0, DeferredPoolAllocateReplayThread, nullptr, 0, nullptr);
-        if (replayThread) {
-            CloseHandle(replayThread);
-        } else {
-            Log("auto pool guard: deferred replay thread creation failed gle=%lu", GetLastError());
-        }
     }
     if (g_config.enableCleoPlusExtendedObjectVarGuard) {
         InstallCleoPlusExtendedObjectVarGuard();
@@ -16085,12 +18602,18 @@ DWORD WINAPI BridgeThread(void*)
     }
     if (g_config.enableAnimStaticAssocGuard) {
         InstallAnimStaticAssocInitGuard();
-    }
-    if (g_config.enableAnimFrameUpdateGuard) {
         InstallAnimUpdateBlendGuard();
         InstallAnimBlendGroupGuard();
+    }
+    if (g_config.enableAnimFrameUpdateGuard) {
         InstallAnimFrameUpdateSkinnedGuard();
         InstallAnimFrameUpdateSkinnedVelocityGuard();
+    }
+    if (g_config.enableAnimEmptyUpdateGuard) {
+        InstallAnimEmptyUpdateGuard();
+    }
+    if (g_config.enableAnimLifecycleDiagnostics) {
+        InstallAnimLifecycleDiagnostics();
     }
     if (g_config.enableRpAnimBlendClumpInitGuard) {
         InstallRpAnimBlendClumpInitGuard();
@@ -16441,36 +18964,25 @@ extern "C" __declspec(dllexport) void FLACompatBridge_KeepExport()
 {
 }
 
-BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID)
+BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID reserved)
 {
     if (reason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(module);
+        g_gameThreadId = GetCurrentThreadId();
         InitializeCriticalSection(&g_deferredPoolAllocateLock);
-        LoadBridgeConfig();
-        GuardOpenLimitAdjusterModuleLoad("process-attach");
-        GuardOpenLimitAdjusterSaLimits("process-attach");
-        RepairOpenLimitAdjusterSaPoolHooks("process-attach");
-        HANDLE olaRepairThread = CreateThread(nullptr, 0, OpenLimitAdjusterRepairThread, nullptr, 0, nullptr);
-        if (olaRepairThread) {
-            CloseHandle(olaRepairThread);
-        } else {
-            Log("OLA hook repair monitor: thread creation failed gle=%lu", GetLastError());
-        }
-        if (g_config.enableVectoredExceptionHandler) {
-            AddVectoredExceptionHandler(1, BridgeVectoredExceptionHandler);
-        }
-        if (g_config.enableProperShadersCompat) {
-            HANDLE earlyThread = CreateThread(nullptr, 0, EarlyProperShadersCompatThread, nullptr, 0, nullptr);
-            if (earlyThread) {
-                CloseHandle(earlyThread);
-            }
-        }
         HANDLE thread = CreateThread(nullptr, 0, BridgeThread, nullptr, 0, nullptr);
         if (thread) {
             CloseHandle(thread);
         }
-    } else if (reason == DLL_PROCESS_DETACH) {
-        DeleteCriticalSection(&g_deferredPoolAllocateLock);
+    } else if (reason == DLL_PROCESS_DETACH && reserved == nullptr) {
+        if (g_vectoredExceptionHandlerHandle) {
+            RemoveVectoredExceptionHandler(g_vectoredExceptionHandlerHandle);
+            g_vectoredExceptionHandlerHandle = nullptr;
+        }
+        if (g_properShadersStateTraceRing) {
+            VirtualFree(g_properShadersStateTraceRing, 0, MEM_RELEASE);
+            g_properShadersStateTraceRing = nullptr;
+        }
     }
     return TRUE;
 }

@@ -53,23 +53,40 @@ already owned by FLA should stay disabled there.
 
 ## v1.10c2 Highlights
 
-- Open Limit Adjuster coexistence guard: detects, audits, and repairs SA-limit
-  pool hooks if FLA and OLA overlap, without requiring OLA to be disabled.
-- Targeted PoolAllocateGuard coverage extended to VehFuncs.
+- Deferred ExtendedData pool continuations now run through a bounded
+  `CStreaming::IsVeryBusy` main-thread pump instead of a worker thread. The
+  pump verifies the process's earliest-created thread before replaying work and
+  chains FLA's verified Hoodlum implementation when FLA owns the entry hook.
+  A signature-checked `CPools::Initialise` tail hook runs bounded batches after
+  core pool creation, and the lazy-pool success path does the same when FLA
+  creates the pools individually. This covers startup paths that have not begun
+  calling `CStreaming::IsVeryBusy` yet.
+- Open Limit Adjuster coexistence uses pre-load INI sanitization for overlapping
+  SA limits. Runtime restoration of vanilla pool-hook bytes is disabled so FLA
+  hooks are not destroyed after installation.
+- Targeted PoolAllocateGuard coverage includes VehFuncs, while the broad
+  automatic guard remains disabled by default. VehFuncs polling starts before
+  the delayed compatibility pass to cover its early startup allocation.
 - New animation/RenderWare crash guards: AnimBlendGroup,
   RpAnimBlendClumpInit, RwClumpForAllAtomics, and
   `CRenderer::ShouldModelBeStreamed` collision-model validation.
-- Streaming busy threshold and population update budget patches to reduce
-  population/streaming stutter.
-- Ped streaming zone repair and gang-only population guard watchdogs.
-- Batch-ready check for LazyCPoolRegistry (`AreCorePoolsReadyForDeferredReplay`)
-  ahead of deferred PoolAllocateGuard replay.
-- ProperShaders compatibility extended to rewrite `CStreaming::ms_aInfoForModel`
-  references embedded inside the ProperShaders module image itself, with
-  runtime/probe source fallback logging.
+- Animation recovery no longer truncates live game-owned node arrays, and the
+  velocity and x87 recovery paths preserve the expected machine state.
+- ProperShaders `AddTxdSlot` coexistence now uses a combined adapter that runs
+  both the FLA hash-registration thunk and the ProperShaders callback. The
+  adapter is rechecked periodically if either module overwrites the GTA hook.
+- ProperShaders fixed-RVA and executable `CStreaming` patches require the
+  supported on-disk `.text` hash plus byte signatures. The old destructive
+  CModelInfo relocation reversal has been removed.
+- Ped streaming repair is diagnostic-only. Population-budget override and
+  RuntimeRewrite are disabled in the release configuration; RuntimeRewrite is
+  additionally restricted to executable pages when explicitly enabled.
+- `DllMain` performs minimal setup and starts a single initialization thread so
+  configuration I/O, OLA sanitization, and compatibility setup run outside the
+  loader lock.
+- Config and log paths are resolved from `gta_sa.exe`, avoiding current-directory
+  races while modloader is starting.
 - Optional loose path node (`.dat`) diagnostics scan.
-- Internal modloader `.ini` parsing helpers shared by the OLA guard and other
-  audits.
 - No API or export changes; ABI stays at version 6.
 
 ## v1.10c1 Highlights
@@ -101,10 +118,27 @@ ModernModuleDenylist = SilentPatch;WidescreenFix;WindowedMode;CrashInfo;modloade
 ForceNoRuntimeRewrite = ProperFixes;SkyGfx;ProperShaders;VehFuncs
 ForceNoAutoPoolGuard = ImprovedStreaming;ProperFixes;ProperShaders
 EnableProperShadersCompat = 1
+
+[Mods]
+EnableRuntimeRewrite = 0
+EnableRuntimeRewriteRescan = 0
+
+[PoolGuards]
+EnableAutoPoolAllocateGuard = 0
+EnableDeferredPoolAllocateReplay = 1
+
+[Diagnostics]
+EnablePedStreamingZoneRepair = 0
+EnablePopulationUpdateBudgetPatch = 0
+PopulationUpdateBudgetMs = 4
+EnableOpenLimitAdjusterSaLimitGuard = 1
+EnableOpenLimitAdjusterModuleGuard = 0
 ```
 
 Only enable broad RuntimeRewrite rules for modules that need them. Modern fixes
 and render plugins should stay denied unless you are testing a specific crash.
+Keep OLA's non-overlapping limits available, but let the SA-limit guard comment
+out entries already owned by FLA.
 
 ## Versioning
 
