@@ -663,7 +663,10 @@ struct KnownCleoPlusVersion {
     int32_t  vehicleOffset;
     int32_t  pedOffset;
 };
-constexpr uint32_t kSupportedProperShadersTextHash = 0x4E3711C9;
+// Batch 5: re-audited against the 2026-07-03 ProperShaders build
+// (1,534,592 bytes, .text CRC32). Matches the bridge-side gate so the
+// CStreaming rewrite, fixed patch and AddTxdSlot verified-rva re-engage.
+constexpr uint32_t kSupportedProperShadersTextHash = 0x526DBD01;
 
 // ---- globals (defined in BridgeGlobals.cpp) ----
 extern char g_logPath[MAX_PATH];

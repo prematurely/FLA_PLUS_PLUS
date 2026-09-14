@@ -291,7 +291,7 @@ void InstallProperShadersVtableGuard()
     // If FLA overwrote a previously installed PS tail hook, recover the verified
     // PS thunk from the known build instead of waiting for another overlap write.
     if (!psTarget && IsSupportedProperShadersTextHash(psTextHash)) {
-        const uintptr_t verifiedTarget = psBase + 0x51630;
+        const uintptr_t verifiedTarget = psBase + 0x628C0;
         if (IsProperShadersAddTxdSlotThunk(psAsi, verifiedTarget)) {
             psTarget = verifiedTarget;
             psTargetSource = "verified-rva";
@@ -328,7 +328,7 @@ void InstallProperShadersVtableGuard()
         return;
     }
 
-    const uintptr_t patchAddr = psBase + 0x50C1F;
+    const uintptr_t patchAddr = psBase + 0x61BFE;
     uint8_t currentBytes[3]{};
     if (!IsReadableCommitted(patchAddr, sizeof(currentBytes))) {
         return;
@@ -344,10 +344,10 @@ void InstallProperShadersVtableGuard()
     static const uint8_t replacement[] = { 0x0F, 0x1F, 0x00 };
     if (std::memcmp(currentBytes, expected, sizeof(expected)) == 0) {
         if (WriteBytesWithProtect(patchAddr, replacement, sizeof(replacement))) {
-            Log("proper shaders fixed patch: applied PS+0x50C1F textHash=0x%08X", psTextHash);
+            Log("proper shaders fixed patch: applied PS+0x61BFE textHash=0x%08X", psTextHash);
         }
     } else if (std::memcmp(currentBytes, replacement, sizeof(replacement)) != 0) {
-        Log("proper shaders fixed patch: signature mismatch at PS+0x50C1F got=%02X %02X %02X textHash=0x%08X",
+        Log("proper shaders fixed patch: signature mismatch at PS+0x61BFE got=%02X %02X %02X textHash=0x%08X",
             currentBytes[0], currentBytes[1], currentBytes[2], psTextHash);
     }
 #endif
