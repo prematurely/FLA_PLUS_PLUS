@@ -46,6 +46,20 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="FLACompatBridge.cpp" />
+    <ClCompile Include="BridgeGlobals.cpp" />
+    <ClCompile Include="BridgeConfig.cpp" />
+    <ClCompile Include="BridgeLogging.cpp" />
+    <ClCompile Include="BridgeDiagnostics.cpp" />
+    <ClCompile Include="BridgeMemory.cpp" />
+    <ClCompile Include="BridgeFlaRuntime.cpp" />
+    <ClCompile Include="BridgePoolGuards.cpp" />
+    <ClCompile Include="BridgeRuntimeRewrite.cpp" />
+    <ClCompile Include="BridgeCompatProperShaders.cpp" />
+    <ClCompile Include="BridgeCompatCleo.cpp" />
+    <ClCompile Include="BridgeCompatOla.cpp" />
+    <ClCompile Include="BridgeAnimGuards.cpp" />
+    <ClCompile Include="BridgeGameGuards.cpp" />
+    <ClCompile Include="BridgeSpecialActors.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>
