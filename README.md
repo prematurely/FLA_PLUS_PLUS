@@ -1,44 +1,114 @@
 # FLA++ / FLACompatBridge
 
-FLA++ is a compatibility bridge for **GTA San Andreas 1.0 US** running with
-fastman92 Limit Adjuster. The runtime file is still named
-`FLACompatBridge.asi` so existing loaders and external ASIs can keep using the
-same module/API name.
+Compatibility bridge for **GTA San Andreas 1.0 US** running with **fastman92 Limit Adjuster (FLA)**.
 
-Current release candidate: `v1.10c2`
-Public baseline: `v1.00`
-API version: `6`
+The runtime file keeps the name `FLACompatBridge.asi` on purpose, so existing loaders and external
+ASIs that link against the module/API name keep working.
 
-## What It Does
+| | |
+|---|---|
+| Latest release | [**v1.11**](https://github.com/prematurely/FLA_PLUS_PLUS/releases/tag/v1.11) — requires SA-RenderStack v3.2 |
+| Public baseline | v1.00 |
+| API version | 6 (37 exports) |
 
-- Protects legacy CLEO/ASI code from FLA-relocated game tables.
-- Guards pool, model, streaming, radar, animation, and TXD access paths that are
-  commonly hit by high-limit GTA SA installs.
-- Adds compatibility guards for ProperShaders, WidescreenFix, CLEO+, Urbanize,
-  Taxi77, SanPablo, MixSets, and similar legacy-risk modules.
-- Keeps modern loaders/fixes out of RuntimeRewrite through module policy
-  denylist rules.
+---
 
-FLA++ is not a replacement for fastman92 Limit Adjuster. It runs beside FLA and
-patches compatibility problems caused by expanded limits, high IDs, relocated
-tables, and older plugins that still assume vanilla addresses.
+## For players: install in one drop
 
-## Install
+### 1. Check you have the right game
 
-Download the release assets:
+| Component | Required |
+|---|---|
+| Game | GTA San Andreas **1.0 US** (HOODLUM) |
+| Limit adjuster | fastman92 Limit Adjuster **7.6** |
+| CLEO | CLEO **5.4** + CLEO+ |
+| FLA++ v1.11 only | SA-RenderStack **v3.2** or newer |
 
-- `FLACompatBridge.asi`
-- `FLACompatBridge.ini`
+If your `gta_sa.exe` is v1.01, v2.00, the Steam build, or the Definitive Edition, **this will not work** —
+the bridge patches 1.0 US addresses directly.
 
-Copy both files into:
+### 2. Drop one file into the game
+
+1. Download `FLACompatBridge.asi` from the [latest release](https://github.com/prematurely/FLA_PLUS_PLUS/releases/latest).
+2. Put it in:
 
 ```text
-GTA San Andreas\scripts\
+GTA San Andreas\scripts\FLACompatBridge.asi
 ```
 
-Do not replace the ASI while `gta_sa.exe` is running.
+3. Make sure the game is **not running**, then launch it once.
 
-## Supported Setup
+The first launch writes `GTA San Andreas\scripts\FLACompatBridge.ini` with the release defaults.
+**Do not copy an INI from an older version** — the config gains keys between versions, and a stale file
+silently keeps old behaviour. If you need to reset, delete the INI and start the game again.
+
+> **modloader users:** an `.asi` inside a modloader folder also works, because config and log paths are
+> resolved from `gta_sa.exe` rather than the current directory. Confirm the log file appears (next step)
+> before assuming it loaded.
+
+### 3. Verify it actually loaded
+
+Start the game, then check:
+
+```text
+GTA San Andreas\scripts\FLACompatBridge.log
+```
+
+- The file exists and has lines → the bridge is running.
+- No file at all → the ASI was not loaded. Check: it is in `scripts\`, your loader loads `.asi` from there,
+  and no other tool overwrote it.
+
+### 4. Uninstall / roll back
+
+Delete `FLACompatBridge.asi`, `FLACompatBridge.ini` and `FLACompatBridge.log` from `scripts\`.
+Nothing else is modified on disk. To go back to a previous version, put the old ASI back and delete the INI
+so it regenerates for that version.
+
+### 5. Troubleshooting first
+
+| Symptom | Likely cause |
+|---|---|
+| Crash at startup after swapping versions | Old INI left behind — delete the INI |
+| No log file, nothing happens | ASI not loaded (wrong folder, loader missing, or blocked) |
+| Crash or missing textures only with ProperShaders | Version mismatch — see the v1.11 note below |
+| Pool or pool-hook problems after installing Open Limit Adjuster | OLA is re-enabling limits that FLA already owns |
+
+> **v1.11 note:** the ProperShaders render-state guard moved out of this repository into SA-RenderStack's
+> D3D9 layer. With SA-RenderStack v3.1 or older, **no component owns that guard**. Install SA-RenderStack
+> **v3.2+** if you run ProperShaders.
+
+---
+
+## 简体中文快速开始
+
+**前置条件**：GTA SA **1.0 US (HOODLUM)** + fastman92 Limit Adjuster **7.6** + CLEO 5.4 / CLEO+。
+使用 v1.11 还需要 **SA-RenderStack v3.2** 或更新版本。
+
+**安装（一步落地）**：
+
+1. 从 [最新 Release](https://github.com/prematurely/FLA_PLUS_PLUS/releases/latest) 下载 `FLACompatBridge.asi`。
+2. 关闭游戏，把文件放进 `GTA San Andreas\scripts\`。
+3. 启动一次游戏，会自动生成 `scripts\FLACompatBridge.ini`。**不要**从旧版本复制 INI。
+
+**验证**：看 `scripts\FLACompatBridge.log` 是否生成并有内容；没有文件说明 ASI 没被加载。
+
+**卸载**：删掉 `scripts\` 下的 `FLACompatBridge.asi`、`.ini`、`.log` 三个文件即可，不会改动其他文件。
+
+---
+
+## What it does
+
+- Protects legacy CLEO/ASI code from FLA-relocated game tables.
+- Guards pool, model, streaming, radar, animation and TXD access paths that high-limit installs hit.
+- Adds compatibility guards for ProperShaders, WidescreenFix, CLEO+, Urbanize, Taxi77, SanPablo, MixSets
+  and similar legacy-risk modules.
+- Keeps modern loaders/fixes out of RuntimeRewrite through module policy denylist rules.
+
+FLA++ is **not** a replacement for fastman92 Limit Adjuster. It runs beside FLA and patches the
+compatibility problems caused by expanded limits, high IDs, relocated tables, and older plugins that
+still assume vanilla addresses.
+
+## Supported setup
 
 | Component | Notes |
 |---|---|
@@ -48,61 +118,21 @@ Do not replace the ASI while `gta_sa.exe` is running.
 | Render/fix mods | ProperShaders, SkyGfx, WidescreenFix, SilentPatch |
 | Other tested mods | Urbanize, Proper Fixes, RoSA, Taxi77, SanPablo, MixSets |
 
-Open Limit Adjuster can be present for non-overlapping limits, but SA limits
-already owned by FLA should stay disabled there.
+Open Limit Adjuster can be present for non-overlapping limits, but SA limits already owned by FLA must stay
+disabled there.
 
-## v1.10c2 Highlights
+## Release history
 
-- Deferred ExtendedData pool continuations now run through a bounded
-  `CStreaming::IsVeryBusy` main-thread pump instead of a worker thread. The
-  pump verifies the process's earliest-created thread before replaying work and
-  chains FLA's verified Hoodlum implementation when FLA owns the entry hook.
-  A signature-checked `CPools::Initialise` tail hook runs bounded batches after
-  core pool creation, and the lazy-pool success path does the same when FLA
-  creates the pools individually. This covers startup paths that have not begun
-  calling `CStreaming::IsVeryBusy` yet.
-- Open Limit Adjuster coexistence uses pre-load INI sanitization for overlapping
-  SA limits. Runtime restoration of vanilla pool-hook bytes is disabled so FLA
-  hooks are not destroyed after installation.
-- Targeted PoolAllocateGuard coverage includes VehFuncs, while the broad
-  automatic guard remains disabled by default. VehFuncs polling starts before
-  the delayed compatibility pass to cover its early startup allocation.
-- New animation/RenderWare crash guards: AnimBlendGroup,
-  RpAnimBlendClumpInit, RwClumpForAllAtomics, and
-  `CRenderer::ShouldModelBeStreamed` collision-model validation.
-- Animation recovery no longer truncates live game-owned node arrays, and the
-  velocity and x87 recovery paths preserve the expected machine state.
-- ProperShaders `AddTxdSlot` coexistence now uses a combined adapter that runs
-  both the FLA hash-registration thunk and the ProperShaders callback. The
-  adapter is rechecked periodically if either module overwrites the GTA hook.
-- ProperShaders fixed-RVA and executable `CStreaming` patches require the
-  supported on-disk `.text` hash plus byte signatures. The old destructive
-  CModelInfo relocation reversal has been removed.
-- Ped streaming repair is diagnostic-only. Population-budget override and
-  RuntimeRewrite are disabled in the release configuration; RuntimeRewrite is
-  additionally restricted to executable pages when explicitly enabled.
-- `DllMain` performs minimal setup and starts a single initialization thread so
-  configuration I/O, OLA sanitization, and compatibility setup run outside the
-  loader lock.
-- Config and log paths are resolved from `gta_sa.exe`, avoiding current-directory
-  races while modloader is starting.
-- Optional loose path node (`.dat`) diagnostics scan.
-- No API or export changes; ABI stays at version 6.
+| Version | Type | Notes |
+|---|---|---|
+| [v1.11](https://github.com/prematurely/FLA_PLUS_PLUS/releases/tag/v1.11) | stable | Architecture split into 15 translation units; render-state contract moved to SA-RenderStack; ProperShaders gate re-pointed at the 2026-07-03 build. In-game verification pending. |
+| [v1.10c3](https://github.com/prematurely/FLA_PLUS_PLUS/releases/tag/v1.10c3) | prerelease | Frozen before the split. Last build where FLA++ owns the render-state guard. Known limitation: only recognises the 2026-06-02 ProperShaders build. |
+| [v1.10c2](https://github.com/prematurely/FLA_PLUS_PLUS/releases/tag/v1.10c2) | prerelease | Superseded. |
+| [v1.00](https://github.com/prematurely/FLA_PLUS_PLUS/releases/tag/v1.00) | baseline | First public release. |
 
-## v1.10c1 Highlights
+See [CHANGELOG.md](CHANGELOG.md) for the full list.
 
-- ProperShaders compatibility for the FLA `AddTxdSlot` hook conflict.
-- ProperShaders shader-name null return guard.
-- CModelInfo render-range relocation repair for ProperShaders.
-- TXD and `RwTexDictionaryFindNamedTexture` pointer guards.
-- WidescreenFix sprite-name guard.
-- Extra animation association/frame update guards for stuck animation and crash
-  recovery.
-- RuntimeRewrite false-positive hardening for non-executable data sections.
-- PoolAllocateGuard pattern scanning and version-hash fallback.
-- `FLACompatBridge_IsModelLoaded` export for external modules.
-
-## Config Notes
+## Config notes
 
 The release INI is intentionally conservative. Important switches:
 
@@ -135,46 +165,29 @@ EnableOpenLimitAdjusterSaLimitGuard = 1
 EnableOpenLimitAdjusterModuleGuard = 0
 ```
 
-Only enable broad RuntimeRewrite rules for modules that need them. Modern fixes
-and render plugins should stay denied unless you are testing a specific crash.
-Keep OLA's non-overlapping limits available, but let the SA-limit guard comment
-out entries already owned by FLA.
+Only enable broad RuntimeRewrite rules for modules that need them. Modern fixes and render plugins should
+stay denied unless you are testing a specific crash. Keep OLA's non-overlapping limits available, but let
+the SA-limit guard comment out entries already owned by FLA.
 
-## Versioning
+## Build from source
 
-- `v1.00`: first public baseline.
-- `v1.01`: bugfix-only patch line.
-- `v1.10`: compatibility feature line.
-- `v1.10cN`: release candidates for `v1.10`.
-- `v2.00`: reserved for breaking config/API/runtime behavior changes.
-
-FLA++ versions are separate from fastman92 Limit Adjuster versions.
-
-## Build
-
-Requires Visual Studio Build Tools with the Win32 MSVC toolchain.
+Requires Visual Studio Build Tools with the Win32 MSVC toolchain (CI uses `v143`).
 
 ```powershell
-& "C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\MSBuild\Current\Bin\MSBuild.exe" `
-  .\FLACompatBridge.vcxproj `
+msbuild .\FLACompatBridge.vcxproj `
+  /m `
   /p:Configuration=Release `
-  /p:Platform=Win32 `
-  /m
+  /p:Platform=Win32
 ```
 
-Output:
+Output: `build\FLACompatBridge.asi` (plus `.pdb` locally).
 
-```text
-..\..\.codex-build\FLACompatBridge\FLACompatBridge.asi
-..\..\.codex-build\FLACompatBridge\FLACompatBridge.pdb
-```
+The release workflow builds the ASI and publishes it as the release asset; the INI is generated by the
+bridge on first run, so no INI is shipped.
 
 ## Exported API
 
-External ASIs can load `FLACompatBridge.asi` and query exports with
-`GetProcAddress`.
-
-Common exports:
+External ASIs can load `FLACompatBridge.asi` and query exports with `GetProcAddress`.
 
 ```c
 uint32_t FLACompatBridge_GetApiVersion(void);
@@ -188,13 +201,39 @@ int FLACompatBridge_GetPoolInfo(uint32_t poolId, uintptr_t* poolPtr, uint32_t* c
 int FLACompatBridge_IsModelLoaded(uint32_t modelId);
 ```
 
-See `FLACompatBridgeAPI.h` for the full API.
+See [FLACompatBridgeAPI.h](FLACompatBridgeAPI.h) for the full surface (API version 6, 37 exports).
 
-## Files
+## Source layout
 
 | File | Purpose |
 |---|---|
-| `FLACompatBridge.cpp` | Runtime implementation. |
-| `FLACompatBridgeAPI.h` | Public C export declarations. |
-| `FLACompatBridge.vcxproj` | Win32 ASI build project. |
-| `CHANGELOG.md` | Release notes and compatibility changes. |
+| `FLACompatBridge.cpp` | Entry point, DllMain, initialization thread. |
+| `FLACompatBridgeInternal.h` | Internal declarations shared by the translation units. |
+| `BridgeConfig.cpp` | INI parsing, defaults, default-config generation. |
+| `BridgeGlobals.cpp` | Global state and resolved paths. |
+| `BridgeLogging.cpp` | Log file handling. |
+| `BridgeFlaRuntime.cpp` | FLA detection and runtime interop. |
+| `BridgeMemory.cpp` | Pattern scanning, patching, VEH helpers. |
+| `BridgePoolGuards.cpp` | Pool allocation guards and deferred replay. |
+| `BridgeGameGuards.cpp` | Pool/model/streaming/radar guards. |
+| `BridgeAnimGuards.cpp` | Animation and RenderWare crash guards. |
+| `BridgeCompatCleo.cpp` | CLEO/CLEO+ compatibility. |
+| `BridgeCompatOla.cpp` | Open Limit Adjuster coexistence. |
+| `BridgeCompatProperShaders.cpp` | ProperShaders `AddTxdSlot` arbitration and texture guards. |
+| `BridgeSpecialActors.cpp` | SanPablo / Taxi77 special-actor bridge. |
+| `BridgeRuntimeRewrite.cpp` | Legacy module address relocation. |
+| `BridgeDiagnostics.cpp` | Diagnostic passes and reporting. |
+
+## Versioning
+
+- `v1.00`: first public baseline.
+- `v1.01`: bugfix-only patch line.
+- `v1.10`: compatibility feature line; `v1.10cN` are its release candidates.
+- `v1.11`: architecture line — decoupled from the ProperShaders render-state contract.
+- `v2.00`: reserved for breaking config/API/runtime behaviour changes.
+
+FLA++ versions are independent of fastman92 Limit Adjuster versions.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
