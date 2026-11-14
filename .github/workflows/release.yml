@@ -39,6 +39,29 @@ jobs:
             Copy-Item .\FLACompatBridge.ini .\dist\FLACompatBridge.ini
           }
 
+      - name: Package one-click installer
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path pack | Out-Null
+          Copy-Item .\dist\FLACompatBridge.asi .\pack\FLACompatBridge.asi
+          Copy-Item .\tools\install.ps1 .\pack\install.ps1
+          Copy-Item .\tools\install.bat .\pack\install.bat
+          if (Test-Path .\dist\FLACompatBridge.ini) { Copy-Item .\dist\FLACompatBridge.ini .\pack\FLACompatBridge.ini }
+          $lines = @(
+            'FLA++ (FLACompatBridge) installer',
+            '',
+            '1. Extract this zip into your GTA San Andreas folder.',
+            '2. Close the game, then double-click install.bat.',
+            '3. Launch the game once; scripts\FLACompatBridge.ini is generated automatically.',
+            '',
+            'Requirements: GTA SA 1.0 US (HOODLUM), FLA 7.6, CLEO 5.4 / CLEO+.',
+            'v1.11 and newer also require SA-RenderStack v3.2 or newer.',
+            '',
+            'Uninstall: delete FLACompatBridge.asi, .ini and .log from scripts\.'
+          ) -join "`r`n"
+          Set-Content -Path .\pack\README.txt -Value $lines -Encoding UTF8
+          Compress-Archive -Path .\pack\* -DestinationPath "dist/FLA_PLUS_PLUS-${{ github.ref_name }}.zip" -Force
+
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
@@ -48,4 +71,5 @@ jobs:
           files: |
             dist/FLACompatBridge.asi
             dist/FLACompatBridge.ini
+            dist/*.zip
           fail_on_unmatched_files: false
